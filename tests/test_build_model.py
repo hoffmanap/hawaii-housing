@@ -131,6 +131,23 @@ def test_policy_impact_refuses_to_compare_baseline_to_itself():
         build_model.run_adu_policy_impact("kauai", build_model.ScenarioParams())
 
 
+def test_development_fee_reduction_is_dollars_not_fabricated_units():
+    """
+    Development Fee Reduction should price the Challenge's standardized
+    $50k/unit assumption onto an EXISTING unit-count column, never invent
+    its own unit-count change (that would require a fee-elasticity
+    estimate this project explicitly declined to fabricate -- see
+    run_development_fee_reduction_scenario()'s docstring).
+    """
+    import pandas as pd
+
+    fake_scenario = pd.DataFrame({"GEOID": ["15007000100"], "estimated_new_units": [10.0]})
+    result = build_model.run_development_fee_reduction_scenario(fake_scenario)
+    assert result["fee_savings_usd"].iloc[0] == 10.0 * build_model.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
+    # Original unit estimate must pass through unchanged.
+    assert result["estimated_new_units"].iloc[0] == 10.0
+
+
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     """
     Kauai's taxclass field is the only one so far with an owner-occupied

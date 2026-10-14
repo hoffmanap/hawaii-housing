@@ -621,6 +621,41 @@ def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = 
     return adu_tract, metadata
 
 
+# Per the Official Rules: use this standardized figure for comparability
+# across submissions rather than sourcing four different real county fee
+# schedules (Honolulu's are documented, the outer counties' much less
+# so -- see the Baseline table above). This is a Challenge-mandated
+# assumption, not a researched Kauai-specific number.
+STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD = 50_000
+
+
+def run_development_fee_reduction_scenario(
+    scenario_tract_df: pd.DataFrame, estimated_units_col: str = "estimated_new_units"
+) -> pd.DataFrame:
+    """
+    Development Fee Reduction, deliberately NOT modeled as a change in
+    unit production. Reducing or eliminating a development fee changes
+    project ECONOMICS, not zoning eligibility -- it doesn't make a parcel
+    legally buildable that wasn't before, and translating "lower fee" into
+    "more units get built" requires a fee-elasticity-of-housing-supply
+    estimate. Real estimates of that elasticity exist in the literature
+    (e.g. RAND's 2024 impact-fee study), but they're city-specific,
+    methodology-dependent, and not something I could responsibly apply to
+    Hawaii without real risk of misapplying someone else's market's
+    number here. Rather than invent a plausible-looking multiplier, this
+    reports the one honest number available without that leap: total
+    dollar fee savings on housing that's ALREADY eligible under whichever
+    scenario's tract-level output is passed in (ADU baseline, Missing
+    Middle policy impact, etc.) -- a feasibility metric, not a production
+    estimate. Pass any tract-level DataFrame with a unit-count column;
+    this doesn't change which parcels are eligible or how many units are
+    assumed, only prices the fee savings on top of that existing number.
+    """
+    result = scenario_tract_df.copy()
+    result["fee_savings_usd"] = result[estimated_units_col] * STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -668,6 +703,12 @@ def main() -> None:
     mm_df, mm_meta = run_missing_middle_scenario(args.county)
     print(f"  eligible parcels: {mm_df['eligible_parcel_count'].sum()}, "
           f"additional estimated units: {mm_df['additional_estimated_units'].sum()}")
+
+    print("\n-- Development Fee Reduction: fee savings, not a production estimate --")
+    adu_fee_df = run_development_fee_reduction_scenario(baseline_df, "estimated_new_units")
+    mm_fee_df = run_development_fee_reduction_scenario(mm_df, "additional_estimated_units")
+    print(f"  ADU baseline fee savings: ${adu_fee_df['fee_savings_usd'].sum():,.0f}")
+    print(f"  Missing Middle intervention fee savings: ${mm_fee_df['fee_savings_usd'].sum():,.0f}")
 
 
 if __name__ == "__main__":
