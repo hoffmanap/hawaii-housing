@@ -145,6 +145,29 @@ Kauai County Code §8-4.2(b) and §8-4.6 (confirmed via eCode360, pointed to dir
 
 **Known limitation, not yet solved:** `existing_units_estimate` assumes exactly 1 existing unit on every already-residential parcel — there's no direct existing-unit-count field for Kauai (same gap that made Oahu's LEGDAT row-count discovery necessary). This overstates remaining capacity on any Kauai parcel that's already multi-unit. Also not yet reconciled: ADU and Missing Middle both draw on the same underlying district density allowance for a given parcel, so a combined headline number should take the **max** of the two scenarios per parcel, not their sum — consistent with the "never count the same physical capacity twice" rule the El Paso reference project uses. That reconciliation logic isn't written yet.
 
+## Baseline vs. policy intervention — architectural correction (2026-10-14)
+
+The user flagged a real gap in the framing above: **the Challenge requires establishing both a baseline (current law) and the policy interventions (changes beyond current law) — they are not the same number.** Up to this point, `run_adu_scenario()`'s "current-code-derived" eligibility rule (confirmed single-family zoning + the real density math) and its slider parameters were blurred together into one function, with no explicit separation of "what's already legal today" from "what a reform would add." That's a modeling error, not just a documentation gap — it would have reported a reform's *total* capacity as if it were the reform's *impact*, double-counting whatever capacity already existed under current law.
+
+**Fixed via `ScenarioParams.is_baseline`:** `ScenarioParams()` with every field at its default now reproduces current Kauai County Code exactly — single-family-zoned (R-numbered) land only, the real density-per-acre rule, no owner-occupancy requirement, parking required as coded. This *is* the Challenge's required baseline, not an arbitrary starting point for sliders. Any non-default field (`allow_non_single_family_zones=True`, `require_owner_occupancy=True`, etc.) represents an actual policy intervention — a change beyond what current law allows.
+
+**`run_adu_policy_impact()`** is the function that answers the Challenge's actual question: it runs the baseline and a given intervention, and returns their *difference* at tract level (`additional_eligible_parcels`, `additional_estimated_units`) — not either number standing alone. It refuses to run if the "intervention" params are identical to the baseline (nothing to measure the impact of).
+
+Verified for the one intervention implemented so far — extending ADU eligibility to non-single-family zones (`allow_non_single_family_zones=True`, using AG/O/CN/CG with the flat `min_lot_sqft` slider, since those zones have no units/acre figure):
+
+| | Eligible parcels | Estimated units |
+| --- | --- | --- |
+| **Baseline** (current code, single-family only) | 2,297 | 144.7 |
+| **+ Intervention impact** (extend to AG/O/CN/CG) | +2,673 | +168.4 |
+
+**This also corrected a related zoning-eligibility error, caught by the same user review:** an earlier pass had conflated ADU eligibility with the broader "guest house" accessory-use provision (§8-1.4(i)), which extends to AG/O/CN/CG — but ADUs specifically are single-family-zoned-land-only. `is_adu_eligible_zone()` no longer has a non-R fallback for the baseline; AG/O/CN/CG only enter the picture as an explicit, labeled intervention.
+
+**Missing Middle got the same correction, and needed it more.** The scenario as first written used `min(max_units_by_density, 6)` as the *reform* capacity for every R-zoned parcel — but `max_units_by_density` is current law, not a reform. A parcel on a large R-20 lot that already legally allows 8 units today isn't a "Missing Middle" success story; that's baseline zoning doing its job. Split into:
+- **`run_missing_middle_baseline()`**: already-legal capacity today (`max_units_by_density − existing_units_estimate`, uncapped at 6) — 3,160 parcels, 30,521 total units of capacity that current code already permits, no reform needed.
+- **`run_missing_middle_scenario()`**: the actual reform, scoped to parcels that are *currently* single-family-restricted in practice (`baseline_capacity == 0` — today's density math on that parcel's actual area allows exactly the existing unit and no more). Only those parcels get upzoned to the Challenge's 6-unit benchmark ceiling. Result: 13,206 eligible parcels, +4,163.8 estimated units.
+
+**That last number is large relative to Kauai's total housing stock (~30,631 units, 2023) — worth flagging rather than quietly presenting as settled.** 4,164 estimated units over the model's horizon is roughly 2.3x Kauai's actual decade-average permit pace (182 units/year × 10 ≈ 1,820). This is gross capacity × the county's absorption-rate benchmark, which is exactly the kind of result the absorption rate exists to temper — but the sheer size of the Missing Middle reform's theoretical unlock (every currently-1-unit R-zoned parcel gaining up to 5 more) means even an 6.3% absorption rate on that gross number still produces a figure worth independently sanity-checking in ArcGIS before trusting it, more than the smaller ADU numbers.
+
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 
 ## Building footprints — buildable-area / reform-capacity modeling, AUTOMATED 2026-10-14

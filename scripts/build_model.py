@@ -77,19 +77,19 @@ COUNTY_CONFIG = {
         # distinction (see data/DATA_SOURCES.md), so the toggle will need
         # a different data source wired in before it works there.
         "owner_occupied_taxclasses": {"OWNER-OCCUPIED", "OWNER-OCCUPIED MIXED-USE"},
-        # Confirmed via Kauai County Code §8-1.4(i)/8-1.5 (eCode360),
-        # 2026-10-14: additional dwelling units / guest houses are
-        # permitted in R-1 to R-6, R-10 to R-20, CN, CG, AG, and O.
-        # IMPORTANT: "R-1 to R-6, R-10 to R-20" is a NUMERIC RANGE, not an
-        # enumerated list -- it includes R-15 (between 10 and 20) and
-        # excludes R-7/R-8/R-9 (the gap between the two ranges). An
-        # earlier version of this list used literal string prefixes
-        # ("R-1","R-2","R-4","R-6","R-10","R-20") and wrongly excluded
-        # R-15 parcels as a result -- see is_adu_eligible_zone() below,
-        # which checks the parsed district number against these ranges
-        # instead of matching strings.
+        # CORRECTED 2026-10-14, per direct user review of Kauai County
+        # Code: ADUs are permitted ONLY on single-family-zoned land, not
+        # the broader CN/CG/AG/O list an earlier pass pulled from the
+        # "guest house" accessory-use provision (§8-1.4(i)) -- guest
+        # houses and ADUs are evidently NOT the same eligible-zone set in
+        # this code, and conflating them overstated eligibility. Single-
+        # family-zoned land = the R-numbered density districts (R-1 to
+        # R-6, R-10 to R-20 -- a NUMERIC RANGE, not an enumerated list: it
+        # includes R-15 and excludes R-7/8/9, the gap between the two
+        # ranges). is_adu_eligible_zone() checks the parsed district
+        # number against this range; there is no non-R fallback for ADUs
+        # any more -- CN/CG/AG/O parcels are not ADU-eligible.
         "adu_eligible_rdistrict_ranges": ((1, 6), (10, 20)),
-        "adu_eligible_non_r_zoning_prefixes": ("C-N", "C-G", "A", "O"),
     },
 }
 
@@ -126,16 +126,17 @@ def max_units_for_parcel(parcel_area_sqft: float, density_per_acre: float) -> in
 
 
 def is_adu_eligible_zone(zoning: str, cfg: dict) -> bool:
-    """Numeric-range check for R-districts (see adu_eligible_rdistrict_ranges
-    above), plus a literal-prefix check for the non-R zones that are also
-    ADU-eligible but have no unit number to range-check."""
+    """Numeric-range check against single-family-zoned R-districts (see
+    adu_eligible_rdistrict_ranges above). ADUs are single-family-only per
+    Kauai County Code -- a non-R zone (AG, O, CN, CG, CON, ...) is never
+    eligible, full stop."""
     if not isinstance(zoning, str):
         return False
     m = RDISTRICT_PATTERN.match(zoning)
-    if m:
-        n = int(m.group(1))
-        return any(lo <= n <= hi for lo, hi in cfg.get("adu_eligible_rdistrict_ranges", ()))
-    return zoning.startswith(tuple(cfg.get("adu_eligible_non_r_zoning_prefixes", ())))
+    if not m:
+        return False
+    n = int(m.group(1))
+    return any(lo <= n <= hi for lo, hi in cfg.get("adu_eligible_rdistrict_ranges", ()))
 
 # Default ADU eligibility rule -- a STARTING POINT meant to be overridden
 # via build_county()'s keyword arguments (see ScenarioParams below), not a
@@ -338,11 +339,34 @@ class ScenarioParams:
         absorption_rate: float | None = None,  # None -> county's own benchmark
         require_owner_occupancy: bool = False,
         require_parking: bool = False,
+        allow_non_single_family_zones: bool = False,
     ):
         self.min_lot_sqft = min_lot_sqft
         self.absorption_rate = absorption_rate
         self.require_owner_occupancy = require_owner_occupancy
         self.require_parking = require_parking
+        # The actual policy lever, not a data-quality fallback: current
+        # Kauai code restricts ADUs to single-family-zoned (R-numbered)
+        # land only -- a confirmed fact, not a placeholder (see
+        # COUNTY_CONFIG and is_adu_eligible_zone()). Setting this True
+        # models the REFORM of extending ADU eligibility to non-single-
+        # family zones (AG, O, CN, CG), gated by min_lot_sqft there since
+        # those zones have no density-per-acre number to check against.
+        # False (the default) reproduces current law exactly.
+        self.allow_non_single_family_zones = allow_non_single_family_zones
+
+    @property
+    def is_baseline(self) -> bool:
+        """True iff every field reproduces current code exactly -- i.e.
+        this is the Challenge's required baseline, not an intervention."""
+        return (
+            not self.require_owner_occupancy
+            and not self.require_parking
+            and not self.allow_non_single_family_zones
+        )
+
+
+ADU_NON_SINGLE_FAMILY_INTERVENTION_ZONING_PREFIXES = ("A", "O", "C-N", "C-G")
 
 
 def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
@@ -350,6 +374,16 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     Cheap re-run against the already-bucketed parcel table (no geometry
     work) -- this is the function a slider UI would call on every drag.
     Returns (tract-level results, metadata about what was/wasn't applied).
+
+    ScenarioParams() with every field at its default IS the Challenge's
+    required BASELINE: current Kauai County Code exactly as written
+    (single-family-zoned land only, the real density-per-acre rule,
+    no owner-occupancy requirement, parking required as coded). Any
+    non-default field is a POLICY INTERVENTION -- a change beyond what
+    current law allows. metadata["is_baseline"] says which one a given
+    call represents, and run_adu_policy_impact() below computes the
+    incremental difference a reform makes against this same baseline,
+    which is the number the Challenge actually asks for.
     """
     params = params or ScenarioParams()
     parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
@@ -362,25 +396,21 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     )
 
     cfg = COUNTY_CONFIG[county]
-    if "adu_eligible_rdistrict_ranges" in cfg:
-        zone_ok = parcel_table["zoning"].apply(lambda z: is_adu_eligible_zone(z, cfg))
-    else:
-        # Fallback for a county without a confirmed eligible-zone list yet
-        # (see module docstring): use the Urban State Land Use District as
-        # a coarser proxy, same as the original placeholder logic.
-        zone_ok = parcel_table["ludcode"] == "U"
+    # Baseline eligibility: single-family-zoned (R-numbered) land only,
+    # per current code -- is_adu_eligible_zone() has no non-R fallback.
+    zone_ok = parcel_table["zoning"].apply(lambda z: is_adu_eligible_zone(z, cfg))
+    if params.allow_non_single_family_zones:
+        # INTERVENTION, not baseline: current code does not permit this.
+        zone_ok |= parcel_table["zoning"].fillna("").str.startswith(
+            ADU_NON_SINGLE_FAMILY_INTERVENTION_ZONING_PREFIXES
+        )
 
-    # Two eligibility rules depending on whether the parcel sits in an
-    # R-numbered density district:
-    #   - R-districts: the confirmed density rule (Kauai County Code
-    #     §8-4.2(b)/§8-4.6) -- a second unit is allowed if existing + 1
-    #     doesn't exceed what the district's units/acre allows on this
-    #     parcel's actual area. min_lot_sqft is NOT applied here; density
-    #     is the real, sourced constraint, not lot size directly (a small
-    #     lot in a high-density district can still qualify).
-    #   - Non-R zones (AG, O, CN, CG -- also ADU-eligible per the
-    #     ordinance, but with no units/acre number to apply): falls back
-    #     to the min_lot_sqft slider, which remains a placeholder there.
+    # The real density rule (Kauai County Code §8-4.2(b)/§8-4.6) governs
+    # R-districts: a second unit is allowed if existing + 1 doesn't
+    # exceed what the district's units/acre allows on this parcel's
+    # actual area. The non-single-family intervention zones have no
+    # units/acre number, so they're gated by min_lot_sqft instead when
+    # that intervention is active.
     has_density_rule = parcel_table["density_per_acre"].notna()
     density_ok = has_density_rule & (
         parcel_table["max_units_by_density"] >= parcel_table["existing_units_estimate"] + 1
@@ -389,6 +419,9 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
 
     eligible = zone_ok & parcel_table["has_existing_residential"] & (density_ok | flat_lot_ok)
     if params.require_owner_occupancy:
+        # INTERVENTION: current code has no owner-occupancy requirement
+        # (confirmed directly against the ordinance text) -- this models
+        # a hypothetical future restriction, not anything real today.
         eligible &= parcel_table["is_owner_occupied"].fillna(False)
 
     adu_eligible = parcel_table[eligible]
@@ -401,11 +434,13 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     adu_tract["estimated_new_units"] = (adu_tract["eligible_parcel_count"] * absorption_rate).round(1)
 
     metadata = {
+        "is_baseline": params.is_baseline,
         "min_lot_sqft": params.min_lot_sqft,
         "absorption_rate": absorption_rate,
         "absorption_rate_was_county_benchmark": params.absorption_rate is None,
         "require_owner_occupancy": params.require_owner_occupancy,
         "require_parking": params.require_parking,
+        "allow_non_single_family_zones": params.allow_non_single_family_zones,
     }
     if params.require_owner_occupancy and county not in {
         c for c, v in COUNTY_CONFIG.items() if v.get("owner_occupied_taxclasses")
@@ -421,65 +456,127 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
             "This toggle is recorded but currently changes nothing."
         )
 
-    out_path = OUT_DIR / f"{county}_adu_scenario_tract.csv"
-    adu_tract.to_csv(out_path, index=False)
+    out_name = f"{county}_adu_baseline_tract.csv" if params.is_baseline else f"{county}_adu_intervention_tract.csv"
+    adu_tract.to_csv(OUT_DIR / out_name, index=False)
     return adu_tract, metadata
+
+
+def run_adu_policy_impact(county: str, intervention_params: ScenarioParams) -> tuple[pd.DataFrame, dict]:
+    """
+    What the Challenge actually asks for: not a standalone intervention
+    number, but the INCREMENTAL impact of a policy change against the
+    current-code baseline. Runs both and returns their tract-level
+    difference. Raises if intervention_params doesn't actually represent
+    a change (comparing the baseline to itself is never the right call).
+    """
+    if intervention_params.is_baseline:
+        raise ValueError(
+            "intervention_params matches the baseline exactly (no field differs from "
+            "ScenarioParams() defaults) -- there's no policy change to measure the impact of."
+        )
+    baseline_df, baseline_meta = run_adu_scenario(county, ScenarioParams())
+    intervention_df, intervention_meta = run_adu_scenario(county, intervention_params)
+
+    impact = intervention_df.merge(
+        baseline_df, on="GEOID", how="outer", suffixes=("_intervention", "_baseline")
+    ).fillna(0)
+    impact["additional_eligible_parcels"] = (
+        impact["eligible_parcel_count_intervention"] - impact["eligible_parcel_count_baseline"]
+    )
+    impact["additional_estimated_units"] = (
+        impact["estimated_new_units_intervention"] - impact["estimated_new_units_baseline"]
+    )
+
+    out_path = OUT_DIR / f"{county}_adu_policy_impact_tract.csv"
+    impact.to_csv(out_path, index=False)
+    metadata = {"baseline": baseline_meta, "intervention": intervention_meta}
+    return impact, metadata
 
 
 MISSING_MIDDLE_MAX_UNITS = 6  # Challenge benchmark definition: 2-6 units, up to 3 stories
 
 
-def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
+def run_missing_middle_baseline(county: str) -> pd.DataFrame:
     """
-    Missing Middle / Gentle Density, for R-numbered districts only (AG/O/
-    CN/CG have no units/acre figure to compute against -- see
-    max_density_units_per_acre()). Capacity per parcel is
-    min(max_units_by_density, 6) - existing_units_estimate, floored at 0:
-    the Challenge's benchmark caps Missing Middle at 6 units regardless of
-    what a district's density math alone would allow (e.g. R-20 on a
-    larger lot could compute past 6).
-
-    Deliberately NOT summed with the ADU scenario's capacity for the same
-    parcel -- both draw on the same underlying district density allowance,
-    so adding them would double-count physical capacity (the same
-    "never count the same capacity twice" rule the El Paso reference
-    project uses). A parcel's headline number should be the max of the two,
-    not their sum; that reconciliation isn't wired in yet since only
-    Kauai's two scenarios exist so far.
+    BASELINE capacity under current code, R-districts only: how many
+    units a parcel could already legally hold today under its district's
+    confirmed density-per-acre rule (§8-4.2(b)/§8-4.6), uncapped at 6 --
+    some larger R-20 lots legally allow more than 6 units today, and that
+    is NOT a Missing Middle reform, it's current law. Per-parcel
+    baseline_capacity = max_units_by_density - existing_units_estimate,
+    floored at 0.
     """
-    cfg = COUNTY_CONFIG[county]
     parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
     if not parcel_path.exists():
         raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
     parcel_table = pd.read_csv(parcel_path)
-
     has_density_rule = parcel_table["density_per_acre"].notna()
-    capacity = (parcel_table["max_units_by_density"].clip(upper=MISSING_MIDDLE_MAX_UNITS) -
-                parcel_table["existing_units_estimate"]).clip(lower=0)
-    eligible_mask = has_density_rule & (capacity > 0)
+    parcel_table["baseline_capacity"] = (
+        parcel_table["max_units_by_density"] - parcel_table["existing_units_estimate"]
+    ).clip(lower=0)
+    parcel_table.loc[~has_density_rule, "baseline_capacity"] = pd.NA
+    return parcel_table
 
+
+def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
+    """
+    Missing Middle / Gentle Density INTERVENTION: the reform only applies
+    to parcels that are CURRENTLY single-family-restricted in practice --
+    i.e. baseline_capacity == 0 (today's density math on this parcel's
+    actual area allows exactly the existing unit and no more, same
+    threshold run_adu_scenario() checks for a second unit). For those
+    parcels, and only those, this models upzoning to the Challenge's
+    benchmark ceiling of 6 units. A parcel a district's density math
+    already lets build past its current unit count (most R-6+ parcels
+    above a certain size) is NOT a Missing Middle candidate -- that's
+    already-legal baseline capacity, reported separately by
+    run_missing_middle_baseline(), and double-counting it here as
+    "reform impact" would overstate what the policy actually changes.
+
+    Not summed with the ADU scenario for the same parcel, for the same
+    reason: both draw on the same underlying district density allowance.
+    A parcel's combined headline number should take the max of the two
+    interventions, not their sum; that reconciliation isn't wired in yet.
+    """
+    parcel_table = run_missing_middle_baseline(county)
+    cfg = COUNTY_CONFIG[county]
+
+    currently_single_family_restricted = parcel_table["baseline_capacity"] == 0
+    reform_capacity = (MISSING_MIDDLE_MAX_UNITS - parcel_table["existing_units_estimate"]).clip(lower=0)
+    additional_capacity = reform_capacity.where(currently_single_family_restricted, 0)
+
+    eligible_mask = additional_capacity > 0
     eligible = parcel_table[eligible_mask].copy()
-    eligible["new_unit_capacity"] = capacity[eligible_mask]
+    eligible["additional_unit_capacity"] = additional_capacity[eligible_mask]
 
     tract_rollup = (
         eligible.groupby("GEOID", observed=True)
-        .agg(eligible_parcel_count=(cfg["parcel_id_field"], "count"), gross_new_unit_capacity=("new_unit_capacity", "sum"))
+        .agg(
+            eligible_parcel_count=(cfg["parcel_id_field"], "count"),
+            additional_gross_capacity=("additional_unit_capacity", "sum"),
+        )
         .reset_index()
     )
     absorption_rate = absorption_rate_benchmark_for(county)
-    tract_rollup["estimated_new_units"] = (tract_rollup["gross_new_unit_capacity"] * absorption_rate).round(1)
+    tract_rollup["additional_estimated_units"] = (
+        tract_rollup["additional_gross_capacity"] * absorption_rate
+    ).round(1)
 
-    out_path = OUT_DIR / f"{county}_missing_middle_scenario_tract.csv"
+    out_path = OUT_DIR / f"{county}_missing_middle_policy_impact_tract.csv"
     tract_rollup.to_csv(out_path, index=False)
     metadata = {
+        "is_baseline": False,
         "absorption_rate": absorption_rate,
         "max_units_cap": MISSING_MIDDLE_MAX_UNITS,
-        "applies_to": "R-numbered density districts only (confirmed §8-4.2(b)/§8-4.6); "
-        "AG/O/CN/CG parcels are excluded from this scenario, not just unscored -- "
-        "they have no units/acre figure to compute a density-based capacity from.",
+        "applies_to": "Only parcels currently single-family-restricted in practice "
+        "(baseline_capacity == 0 under the real density rule) -- a parcel a district's "
+        "density math already lets build past its current unit count is baseline capacity, "
+        "not a Missing Middle reform effect, and is excluded here to avoid double-counting it "
+        "as policy impact. See run_missing_middle_baseline() for that separate number. "
+        "AG/O/CN/CG parcels are excluded entirely -- no units/acre figure to compute against.",
         "known_limitation": "existing_units_estimate assumes 1 unit per already-residential "
-        "parcel (no direct unit-count field for Kauai) -- overstates capacity on any parcel "
-        "that's already multi-unit.",
+        "parcel (no direct unit-count field for Kauai) -- affects both the baseline and the "
+        "reform-eligibility threshold here.",
     }
     return tract_rollup, metadata
 
@@ -533,6 +630,7 @@ def main() -> None:
     parser.add_argument("--absorption-rate", type=float, default=None, help="Overrides the county benchmark")
     parser.add_argument("--require-owner-occupancy", action="store_true")
     parser.add_argument("--require-parking", action="store_true")
+    parser.add_argument("--allow-non-single-family-zones", action="store_true")
     args = parser.parse_args()
 
     print(f"Building model for {args.county}...")
@@ -541,15 +639,35 @@ def main() -> None:
         n_rows = sum(1 for _ in path.open()) - 1
         print(f"  {name}: {n_rows} rows -> {path}")
 
+    print("\n-- ADU: baseline (current code) --")
+    baseline_df, baseline_meta = run_adu_scenario(args.county, ScenarioParams())
+    print(f"  eligible parcels: {baseline_df['eligible_parcel_count'].sum()}, "
+          f"estimated units: {baseline_df['estimated_new_units'].sum()}")
+    print(f"  {baseline_meta}")
+
     params = ScenarioParams(
         min_lot_sqft=args.min_lot_sqft,
         absorption_rate=args.absorption_rate,
         require_owner_occupancy=args.require_owner_occupancy,
         require_parking=args.require_parking,
+        allow_non_single_family_zones=args.allow_non_single_family_zones,
     )
-    adu_tract, metadata = run_adu_scenario(args.county, params)
-    print(f"  adu_scenario: {len(adu_tract)} rows -> {OUT_DIR / f'{args.county}_adu_scenario_tract.csv'}")
-    print(f"  scenario params: {metadata}")
+    if not params.is_baseline:
+        print("\n-- ADU: policy impact (requested params vs. baseline) --")
+        impact_df, impact_meta = run_adu_policy_impact(args.county, params)
+        print(f"  additional eligible parcels: {impact_df['additional_eligible_parcels'].sum()}, "
+              f"additional estimated units: {impact_df['additional_estimated_units'].sum()}")
+
+    print("\n-- Missing Middle: baseline (already-legal capacity under current code) --")
+    mm_baseline = run_missing_middle_baseline(args.county)
+    print(f"  parcels with existing legal capacity beyond current units: "
+          f"{(mm_baseline['baseline_capacity'] > 0).sum()}, "
+          f"total baseline capacity: {mm_baseline['baseline_capacity'].sum()}")
+
+    print("\n-- Missing Middle: policy impact (upzoning currently single-family-restricted parcels) --")
+    mm_df, mm_meta = run_missing_middle_scenario(args.county)
+    print(f"  eligible parcels: {mm_df['eligible_parcel_count'].sum()}, "
+          f"additional estimated units: {mm_df['additional_estimated_units'].sum()}")
 
 
 if __name__ == "__main__":

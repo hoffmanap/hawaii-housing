@@ -8,6 +8,8 @@ docs/MODEL_AND_ASSUMPTIONS.md for the verified run (25,119 parcels in,
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import build_model  # noqa: E402
@@ -97,20 +99,36 @@ def test_scenario_params_default_absorption_rate_is_county_benchmark():
     assert params.absorption_rate is None
 
 
-def test_kauai_adu_eligible_zones_use_numeric_ranges_not_string_prefixes():
+def test_kauai_adu_eligible_zones_are_single_family_only():
     """
-    Regression guard for two corrections made 2026-10-14: ADU eligibility
-    should come from Kauai's confirmed ordinance zoning rule (County Code
-    Ch. 8, Art. 15), not the earlier State-Land-Use-District ("Urban")
-    proxy it replaced -- and "R-1 to R-6, R-10 to R-20" is a NUMERIC
-    RANGE (an earlier version matched literal strings and wrongly
-    excluded R-15, which falls inside the 10-20 range).
+    Regression guard for corrections made 2026-10-14: ADUs are permitted
+    ONLY on single-family-zoned (R-numbered) land per direct review of
+    Kauai County Code -- an earlier pass had wrongly extended eligibility
+    to AG/O/CN/CG by conflating ADU provisions with the broader "guest
+    house" accessory-use provision. "R-1 to R-6, R-10 to R-20" is also a
+    NUMERIC RANGE, not an enumerated list (includes R-15, excludes R-8).
     """
     cfg = build_model.COUNTY_CONFIG["kauai"]
-    assert "A" in cfg["adu_eligible_non_r_zoning_prefixes"]  # Agricultural -- the old proxy excluded it
+    assert "adu_eligible_non_r_zoning_prefixes" not in cfg
     assert build_model.is_adu_eligible_zone("R-15", cfg) is True
     assert build_model.is_adu_eligible_zone("R-8", cfg) is False  # the gap between the two ranges
     assert build_model.is_adu_eligible_zone("R-40", cfg) is False
+    assert build_model.is_adu_eligible_zone("A", cfg) is False  # not single-family zoned
+    assert build_model.is_adu_eligible_zone("O", cfg) is False
+
+
+def test_scenario_params_default_is_the_baseline():
+    """ScenarioParams() with every field at its default must represent
+    current code exactly -- that's the Challenge's required baseline,
+    not an arbitrary starting point for sliders."""
+    assert build_model.ScenarioParams().is_baseline is True
+    assert build_model.ScenarioParams(require_owner_occupancy=True).is_baseline is False
+    assert build_model.ScenarioParams(allow_non_single_family_zones=True).is_baseline is False
+
+
+def test_policy_impact_refuses_to_compare_baseline_to_itself():
+    with pytest.raises(ValueError):
+        build_model.run_adu_policy_impact("kauai", build_model.ScenarioParams())
 
 
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
