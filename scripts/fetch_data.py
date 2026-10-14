@@ -81,6 +81,33 @@ LAYERS = {
     "asmtpitt_honolulu": (HONOLULU_BFS_BASE_URL, 10, 2000),  # tax-class + building value; join key: tmk/parid
 }
 
+# Census 2020 tract boundaries, needed to roll parcel-level output up to the
+# Challenge's required tract-level aggregation. TIGERweb's Tracts_Blocks
+# layer 4 ("Census Tracts"), filtered to Hawaii (STATE='15'). This one needs
+# a WHERE clause rather than "1=1", so it's fetched by name directly in
+# main() rather than through fetch_layer()'s generic LAYERS loop.
+TIGERWEB_TRACTS_URL = (
+    "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer"
+)
+TIGERWEB_TRACTS_LAYER = 4
+
+
+def fetch_hawaii_census_tracts(out_path: Path) -> int:
+    params = {
+        "where": "STATE='15'",
+        "outFields": "GEOID,STATE,COUNTY,TRACT,NAME,AREALAND,AREAWATER",
+        "f": "geojson",
+        "returnGeometry": "true",
+    }
+    url = f"{TIGERWEB_TRACTS_URL}/{TIGERWEB_TRACTS_LAYER}/query?{urllib.parse.urlencode(params)}"
+    payload = _get_json_with_retries(url)
+    if "error" in payload:
+        raise RuntimeError(f"TIGERweb error: {payload['error']}")
+    features = payload.get("features", [])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return len(features)
+
 
 def _get_json_with_retries(url: str, attempts: int = 4, base_delay: float = 2.0) -> dict:
     """GET with retry/backoff -- this service is reachable only through an
@@ -189,7 +216,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--layer",
-        choices=list(LAYERS) + ["building_footprints", "all"],
+        choices=list(LAYERS) + ["building_footprints", "census_tracts", "all"],
         default="all",
         help="Which named layer to fetch (default: all)",
     )
@@ -201,7 +228,13 @@ def main() -> None:
         count = fetch_building_footprints(out_path)
         print(f"  {count} records -> {out_path}")
 
-    if args.layer != "building_footprints":
+    if args.layer in ("census_tracts", "all"):
+        out_path = RAW_DIR / "census_tracts.json"
+        print("Fetching census_tracts (TIGERweb, Hawaii)...")
+        count = fetch_hawaii_census_tracts(out_path)
+        print(f"  {count} records -> {out_path}")
+
+    if args.layer not in ("building_footprints", "census_tracts"):
         targets = LAYERS if args.layer == "all" else {args.layer: LAYERS[args.layer]}
         for name, (base_url, layer_id, page_size) in targets.items():
             out_path = RAW_DIR / f"{name}.json"

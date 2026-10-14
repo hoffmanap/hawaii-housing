@@ -41,6 +41,10 @@ Live-data check against the full `ASMTPITT` table (327,161 rows) found this tabl
 
 **License:** stated as public domain by the Hawaii Office of Planning and Sustainable Development download page, no fee, standard no-warranty/no-legal-representation disclaimer. No redistribution restriction stated. See docs/DATA_PROVENANCE.md for the full citation and access-date record required by the Challenge.
 
+## Census 2020 tract boundaries (added 2026-10-14)
+
+`fetch_data.py --layer census_tracts`: TIGERweb's `Tracts_Blocks` MapServer, layer 4 ("Census Tracts"), filtered to Hawaii (`STATE='15'`). No pagination needed (461 features, under the layer's 100,000 max record count). This is the tract geometry build_model.py joins parcels to for tract-level rollup. **Note:** 461 tracts returned here vs. 432 in the HUD USPS extract below — likely water-only/zero-population 2020 tracts with no delivery points, not yet confirmed.
+
 ## Current housing stock: HUD USPS address data (added 2026-10-14)
 
 **HUD Aggregated USPS Administrative Data on Address Vacancies** — free (registration required), quarterly, census-tract-level counts of active/vacant/no-stat residential and business delivery-point addresses, nationwide including Hawaii. ([huduser.gov/portal/node/1664](https://huduser.gov/portal/node/1664); FAQ: [2018-USPS-FAQ.pdf](https://www.HUDUser.gov/portal/sites/default/files/pdf/2018-USPS-FAQ.pdf))

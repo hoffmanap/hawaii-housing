@@ -71,6 +71,20 @@ Reform-capacity scenarios (Missing Middle, Parking Requirement Reduction, and an
 
 **Still open:** exact bucket boundaries (lot-size and coverage bands above are placeholders) and whether `remaining_area` needs a per-zoning-district coverage-ratio/setback adjustment rather than the flat `parcel − footprint` figure (same ordinance-text research flagged elsewhere in this document).
 
+## `build_model.py` — implemented and verified for Kauai (2026-10-14)
+
+The pipeline above is now real code (`scripts/build_model.py`), not just a plan. Status: **Kauai only, verified end-to-end against live data** — Honolulu, Hawaii County, and Maui share the same functions but each needs its own `COUNTY_CONFIG` entry (the field names differ per county — see data/DATA_SOURCES.md), and Honolulu specifically needs a LEGDAT-row-count existing-residential flag instead of a taxclass match, which isn't wired in yet.
+
+**What it does:** loads parcels + county zoning + statewide State Land Use Districts + Census 2020 tracts (added today — TIGERweb, Hawaii-filtered, 461 tracts) + building footprints, all reprojected to UTM Zone 4N (EPSG:32604) for consistent area math across the state. Joins each parcel to its zoning district, State Land Use District, and census tract by centroid-in-polygon (the standard approximation at this feature count — not full polygon overlay). Joins building footprints to parcels the same way, sums footprint area per parcel, and computes `coverage_ratio` and `remaining_area_sqft`. Buckets every parcel on lot-size band × coverage band × zoning × State Land Use District, and rolls up to tract level. Runs a first scenario (ADUs) against the bucketed table.
+
+**Verified run, Kauai, 2026-10-14:** 25,119 parcels in, 25,119 out (no join-induced duplicates — fixed a boundary-coincidence double-count in both the zoning/SLUD/tract join and the footprint join, where a centroid landing exactly on a shared edge matched two polygons). Coverage ratio distribution: median 5.5%, IQR 0–27% — consistent with Kauai's largely rural, low-density character, not an artifact. ADU scenario: 10,000–11,000 eligible parcels statewide-for-Kauai, ~837 estimated new units at the placeholder 8% absorption rate — a sane order of magnitude for the county's housing stock, not implausible, but **both the eligibility rule and the absorption rate are placeholders, not sourced conclusions:**
+- ADU eligibility used `ludcode == 'U'` (Urban district) + an existing-residential taxclass + lot size ≥ 7,500 sqft. **The 7,500 sqft minimum is an unconfirmed placeholder** — it has not been checked against Kauai's actual ADU ordinance (the same open question already logged above under the ADU scenario mapping).
+- The 8% absorption rate is the same unsourced placeholder flagged in the Core Assumptions table below — not yet grounded in Hawaii permit-pace data.
+
+**Known approximation, not yet addressed:** census tract count mismatch — TIGERweb returns 461 Hawaii tracts, HUD's USPS extract covers 432. Likely water-only or population-zero 2020 tracts with no USPS delivery points; needs confirming before the HUD stock numbers and this pipeline's tract output are merged.
+
+Outputs land in `data/processed/` (gitignored, same as `data/raw/` — regenerate with `python scripts/build_model.py --county kauai`): `{county}_parcel_level.csv`, `{county}_bucket_rollup_tract.csv`, `{county}_adu_scenario_tract.csv`.
+
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 
 ## Building footprints — buildable-area / reform-capacity modeling, AUTOMATED 2026-10-14
