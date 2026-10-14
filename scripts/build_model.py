@@ -30,6 +30,8 @@ requirement -- see docs/MODEL_AND_ASSUMPTIONS.md.
 """
 import argparse
 import json
+import math
+import re
 from pathlib import Path
 
 import geopandas as gpd
@@ -77,13 +79,63 @@ COUNTY_CONFIG = {
         "owner_occupied_taxclasses": {"OWNER-OCCUPIED", "OWNER-OCCUPIED MIXED-USE"},
         # Confirmed via Kauai County Code §8-1.4(i)/8-1.5 (eCode360),
         # 2026-10-14: additional dwelling units / guest houses are
-        # permitted in R-1 to R-6, R-10 to R-20, CN, CG, AG, and O --
-        # broader than, and a direct replacement for, the earlier
-        # State-Land-Use-District-only ("Urban") proxy. Matched by zoning
-        # prefix so combo/overlay codes like "R-4/ST-P" still count.
-        "adu_eligible_zoning_prefixes": ("R-1", "R-2", "R-4", "R-6", "R-10", "R-20", "C-N", "C-G", "A", "O"),
+        # permitted in R-1 to R-6, R-10 to R-20, CN, CG, AG, and O.
+        # IMPORTANT: "R-1 to R-6, R-10 to R-20" is a NUMERIC RANGE, not an
+        # enumerated list -- it includes R-15 (between 10 and 20) and
+        # excludes R-7/R-8/R-9 (the gap between the two ranges). An
+        # earlier version of this list used literal string prefixes
+        # ("R-1","R-2","R-4","R-6","R-10","R-20") and wrongly excluded
+        # R-15 parcels as a result -- see is_adu_eligible_zone() below,
+        # which checks the parsed district number against these ranges
+        # instead of matching strings.
+        "adu_eligible_rdistrict_ranges": ((1, 6), (10, 20)),
+        "adu_eligible_non_r_zoning_prefixes": ("C-N", "C-G", "A", "O"),
     },
 }
+
+# Confirmed via Kauai County Code §8-4.2(b), §8-4.6 (eCode360, 2026-10-14):
+# "The number portion of each Residential Density District establishes the
+# maximum number of dwelling units that may be permitted per acre of
+# land." I.e. R-6 allows up to 6 units/acre, R-10 up to 10, etc. -- a real
+# district-specific density rule, replacing the earlier flat min_lot_sqft
+# placeholder for every R-numbered district. §8-4.6(f): round a fractional
+# result up when it's 65%+ of a whole unit (ROUND_UP_THRESHOLD below).
+# §8-4.6(b) excludes adjoining streets/common areas from the area used --
+# NOT applied here; this pipeline uses gross parcel geometry from the
+# county GIS layer, a known simplification worth flagging in
+# docs/MODEL_AND_ASSUMPTIONS.md, not silently absorbed into the number.
+RDISTRICT_PATTERN = re.compile(r"^R-(\d+)")
+ROUND_UP_THRESHOLD = 0.65
+
+
+def max_density_units_per_acre(zoning: str) -> float | None:
+    """Parse the density straight from the district's own number (R-6 ->
+    6.0 units/acre). Returns None for non-R-numbered zones (AG, O, CN,
+    CG, CON, etc.), which this density rule doesn't apply to -- those
+    fall back to the flat min_lot_sqft slider in run_adu_scenario()."""
+    if not isinstance(zoning, str):
+        return None
+    m = RDISTRICT_PATTERN.match(zoning)
+    return float(m.group(1)) if m else None
+
+
+def max_units_for_parcel(parcel_area_sqft: float, density_per_acre: float) -> int:
+    raw = (parcel_area_sqft / 43_560) * density_per_acre
+    whole, frac = int(raw), raw - int(raw)
+    return whole + 1 if frac >= ROUND_UP_THRESHOLD else whole
+
+
+def is_adu_eligible_zone(zoning: str, cfg: dict) -> bool:
+    """Numeric-range check for R-districts (see adu_eligible_rdistrict_ranges
+    above), plus a literal-prefix check for the non-R zones that are also
+    ADU-eligible but have no unit number to range-check."""
+    if not isinstance(zoning, str):
+        return False
+    m = RDISTRICT_PATTERN.match(zoning)
+    if m:
+        n = int(m.group(1))
+        return any(lo <= n <= hi for lo, hi in cfg.get("adu_eligible_rdistrict_ranges", ()))
+    return zoning.startswith(tuple(cfg.get("adu_eligible_non_r_zoning_prefixes", ())))
 
 # Default ADU eligibility rule -- a STARTING POINT meant to be overridden
 # via build_county()'s keyword arguments (see ScenarioParams below), not a
@@ -230,10 +282,28 @@ def build_county(county: str) -> dict[str, Path]:
         parcels[cfg["taxclass_field"]].isin(owner_occ_classes) if owner_occ_classes else pd.NA
     )
 
+    # Density-based max-unit rule (R-district number = units/acre) --
+    # None/NaN for non-R-numbered zones, where it doesn't apply.
+    parcels["density_per_acre"] = parcels[cfg["zoning_field"]].apply(max_density_units_per_acre)
+    parcels["max_units_by_density"] = parcels.apply(
+        lambda r: max_units_for_parcel(r["parcel_area_sqft"], r["density_per_acre"])
+        if pd.notna(r["density_per_acre"])
+        else pd.NA,
+        axis=1,
+    )
+    # Approximation, same status as Oahu's LEGDAT-based existing_units
+    # count elsewhere in this project: no direct existing-unit-count field
+    # exists on Kauai's parcel layer, so this assumes one existing
+    # dwelling per already-residential parcel. Will overcount available
+    # capacity on any parcel that's actually already multi-unit (e.g. an
+    # existing duplex on a R-6 lot) -- a real limitation, not yet solved.
+    parcels["existing_units_estimate"] = parcels["has_existing_residential"].astype(int)
+
     parcel_cols = [
         pid, "GEOID", cfg["zoning_field"], "ludcode", cfg["taxclass_field"],
         "parcel_area_sqft", "footprint_area_sqft", "coverage_ratio", "remaining_area_sqft",
         "lot_size_band", "coverage_band", "has_existing_residential", "is_owner_occupied",
+        "density_per_acre", "max_units_by_density", "existing_units_estimate",
     ]
     parcel_table = parcels[parcel_cols].rename(columns={cfg["zoning_field"]: "zoning", cfg["taxclass_field"]: "taxclass"})
 
@@ -291,20 +361,33 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         params.absorption_rate if params.absorption_rate is not None else absorption_rate_benchmark_for(county)
     )
 
-    zoning_prefixes = COUNTY_CONFIG[county].get("adu_eligible_zoning_prefixes")
-    if zoning_prefixes:
-        zone_ok = parcel_table["zoning"].fillna("").str.startswith(tuple(zoning_prefixes))
+    cfg = COUNTY_CONFIG[county]
+    if "adu_eligible_rdistrict_ranges" in cfg:
+        zone_ok = parcel_table["zoning"].apply(lambda z: is_adu_eligible_zone(z, cfg))
     else:
         # Fallback for a county without a confirmed eligible-zone list yet
         # (see module docstring): use the Urban State Land Use District as
         # a coarser proxy, same as the original placeholder logic.
         zone_ok = parcel_table["ludcode"] == "U"
 
-    eligible = (
-        zone_ok
-        & parcel_table["has_existing_residential"]
-        & (parcel_table["parcel_area_sqft"] >= params.min_lot_sqft)
+    # Two eligibility rules depending on whether the parcel sits in an
+    # R-numbered density district:
+    #   - R-districts: the confirmed density rule (Kauai County Code
+    #     §8-4.2(b)/§8-4.6) -- a second unit is allowed if existing + 1
+    #     doesn't exceed what the district's units/acre allows on this
+    #     parcel's actual area. min_lot_sqft is NOT applied here; density
+    #     is the real, sourced constraint, not lot size directly (a small
+    #     lot in a high-density district can still qualify).
+    #   - Non-R zones (AG, O, CN, CG -- also ADU-eligible per the
+    #     ordinance, but with no units/acre number to apply): falls back
+    #     to the min_lot_sqft slider, which remains a placeholder there.
+    has_density_rule = parcel_table["density_per_acre"].notna()
+    density_ok = has_density_rule & (
+        parcel_table["max_units_by_density"] >= parcel_table["existing_units_estimate"] + 1
     )
+    flat_lot_ok = ~has_density_rule & (parcel_table["parcel_area_sqft"] >= params.min_lot_sqft)
+
+    eligible = zone_ok & parcel_table["has_existing_residential"] & (density_ok | flat_lot_ok)
     if params.require_owner_occupancy:
         eligible &= parcel_table["is_owner_occupied"].fillna(False)
 
@@ -341,6 +424,64 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     out_path = OUT_DIR / f"{county}_adu_scenario_tract.csv"
     adu_tract.to_csv(out_path, index=False)
     return adu_tract, metadata
+
+
+MISSING_MIDDLE_MAX_UNITS = 6  # Challenge benchmark definition: 2-6 units, up to 3 stories
+
+
+def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
+    """
+    Missing Middle / Gentle Density, for R-numbered districts only (AG/O/
+    CN/CG have no units/acre figure to compute against -- see
+    max_density_units_per_acre()). Capacity per parcel is
+    min(max_units_by_density, 6) - existing_units_estimate, floored at 0:
+    the Challenge's benchmark caps Missing Middle at 6 units regardless of
+    what a district's density math alone would allow (e.g. R-20 on a
+    larger lot could compute past 6).
+
+    Deliberately NOT summed with the ADU scenario's capacity for the same
+    parcel -- both draw on the same underlying district density allowance,
+    so adding them would double-count physical capacity (the same
+    "never count the same capacity twice" rule the El Paso reference
+    project uses). A parcel's headline number should be the max of the two,
+    not their sum; that reconciliation isn't wired in yet since only
+    Kauai's two scenarios exist so far.
+    """
+    cfg = COUNTY_CONFIG[county]
+    parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
+    if not parcel_path.exists():
+        raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
+    parcel_table = pd.read_csv(parcel_path)
+
+    has_density_rule = parcel_table["density_per_acre"].notna()
+    capacity = (parcel_table["max_units_by_density"].clip(upper=MISSING_MIDDLE_MAX_UNITS) -
+                parcel_table["existing_units_estimate"]).clip(lower=0)
+    eligible_mask = has_density_rule & (capacity > 0)
+
+    eligible = parcel_table[eligible_mask].copy()
+    eligible["new_unit_capacity"] = capacity[eligible_mask]
+
+    tract_rollup = (
+        eligible.groupby("GEOID", observed=True)
+        .agg(eligible_parcel_count=(cfg["parcel_id_field"], "count"), gross_new_unit_capacity=("new_unit_capacity", "sum"))
+        .reset_index()
+    )
+    absorption_rate = absorption_rate_benchmark_for(county)
+    tract_rollup["estimated_new_units"] = (tract_rollup["gross_new_unit_capacity"] * absorption_rate).round(1)
+
+    out_path = OUT_DIR / f"{county}_missing_middle_scenario_tract.csv"
+    tract_rollup.to_csv(out_path, index=False)
+    metadata = {
+        "absorption_rate": absorption_rate,
+        "max_units_cap": MISSING_MIDDLE_MAX_UNITS,
+        "applies_to": "R-numbered density districts only (confirmed §8-4.2(b)/§8-4.6); "
+        "AG/O/CN/CG parcels are excluded from this scenario, not just unscored -- "
+        "they have no units/acre figure to compute a density-based capacity from.",
+        "known_limitation": "existing_units_estimate assumes 1 unit per already-residential "
+        "parcel (no direct unit-count field for Kauai) -- overstates capacity on any parcel "
+        "that's already multi-unit.",
+    }
+    return tract_rollup, metadata
 
 
 def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
