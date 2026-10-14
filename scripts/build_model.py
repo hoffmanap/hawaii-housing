@@ -75,6 +75,13 @@ COUNTY_CONFIG = {
         # distinction (see data/DATA_SOURCES.md), so the toggle will need
         # a different data source wired in before it works there.
         "owner_occupied_taxclasses": {"OWNER-OCCUPIED", "OWNER-OCCUPIED MIXED-USE"},
+        # Confirmed via Kauai County Code §8-1.4(i)/8-1.5 (eCode360),
+        # 2026-10-14: additional dwelling units / guest houses are
+        # permitted in R-1 to R-6, R-10 to R-20, CN, CG, AG, and O --
+        # broader than, and a direct replacement for, the earlier
+        # State-Land-Use-District-only ("Urban") proxy. Matched by zoning
+        # prefix so combo/overlay codes like "R-4/ST-P" still count.
+        "adu_eligible_zoning_prefixes": ("R-1", "R-2", "R-4", "R-6", "R-10", "R-20", "C-N", "C-G", "A", "O"),
     },
 }
 
@@ -284,8 +291,17 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         params.absorption_rate if params.absorption_rate is not None else absorption_rate_benchmark_for(county)
     )
 
+    zoning_prefixes = COUNTY_CONFIG[county].get("adu_eligible_zoning_prefixes")
+    if zoning_prefixes:
+        zone_ok = parcel_table["zoning"].fillna("").str.startswith(tuple(zoning_prefixes))
+    else:
+        # Fallback for a county without a confirmed eligible-zone list yet
+        # (see module docstring): use the Urban State Land Use District as
+        # a coarser proxy, same as the original placeholder logic.
+        zone_ok = parcel_table["ludcode"] == "U"
+
     eligible = (
-        (parcel_table["ludcode"] == "U")
+        zone_ok
         & parcel_table["has_existing_residential"]
         & (parcel_table["parcel_area_sqft"] >= params.min_lot_sqft)
     )
@@ -323,6 +339,46 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         )
 
     out_path = OUT_DIR / f"{county}_adu_scenario_tract.csv"
+    adu_tract.to_csv(out_path, index=False)
+    return adu_tract, metadata
+
+
+def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
+    """
+    Parking Requirement Reduction, built on the same ADU-eligible parcel
+    set as run_adu_scenario() -- same physical capacity question (can an
+    ADU go here), but comparing two parking regimes: Kauai's real
+    confirmed requirement of 1 off-street space per ADU (County Code
+    Chapter 8, Article 15/§8-1.4(i), see docs/MODEL_AND_ASSUMPTIONS.md) vs.
+    that requirement eliminated.
+
+    This reports the SAME eligible-parcel count either way -- parking
+    doesn't gate whether an ADU is legally allowed on Kauai, it gates how
+    much of the remaining buildable area that parking consumes. What
+    changes between regimes is land available for the unit itself:
+    roughly 200 sqft/space (standard surface parking stall + maneuvering
+    allowance -- a planning-literature figure, not Kauai-specific, same
+    status as the 850 sqft/unit figure flagged in the El Paso build this
+    project inherited the pattern from).
+    """
+    params = params or ScenarioParams()
+    adu_tract, metadata = run_adu_scenario(county, params)
+
+    sqft_per_parking_space = 200  # planning-literature placeholder, not Kauai-sourced
+    adu_tract = adu_tract.copy()
+    adu_tract["parking_land_consumed_sqft_if_required"] = (
+        adu_tract["eligible_parcel_count"] * sqft_per_parking_space
+    )
+    metadata["parking_spaces_required_per_unit_current_code"] = 1
+    metadata["sqft_per_parking_space_assumption"] = sqft_per_parking_space
+    metadata["note"] = (
+        "Parking does not change eligibility on Kauai (ADUs require 1 space either way "
+        "under current code) -- this scenario reports land consumed by that requirement, "
+        "not a change in which parcels qualify. Reducing the requirement to 0 removes this "
+        "land cost but produces the same eligible_parcel_count as the ADU scenario above."
+    )
+
+    out_path = OUT_DIR / f"{county}_parking_scenario_tract.csv"
     adu_tract.to_csv(out_path, index=False)
     return adu_tract, metadata
 

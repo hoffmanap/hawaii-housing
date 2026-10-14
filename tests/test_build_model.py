@@ -64,6 +64,18 @@ def test_scenario_params_default_absorption_rate_is_county_benchmark():
     assert params.absorption_rate is None
 
 
+def test_kauai_has_confirmed_adu_eligible_zoning_prefixes():
+    """
+    Regression guard for the 2026-10-14 correction: ADU eligibility
+    should come from Kauai's confirmed ordinance zoning list
+    (County Code Ch. 8, Art. 15), not the earlier State-Land-Use-District
+    ("Urban") proxy it replaced.
+    """
+    prefixes = build_model.COUNTY_CONFIG["kauai"]["adu_eligible_zoning_prefixes"]
+    assert "A" in prefixes  # Agricultural -- the proxy this replaced would have excluded it
+    assert "R-6" in prefixes
+
+
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     """
     Kauai's taxclass field is the only one so far with an owner-occupied

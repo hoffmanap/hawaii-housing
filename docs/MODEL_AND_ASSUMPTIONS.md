@@ -115,6 +115,24 @@ Implemented now, Kauai-verified:
 
 The expensive spatial-join/bucketing step (`build_county()`) runs once per county; `run_adu_scenario()` re-applies these parameters cheaply against the already-bucketed table — the split a real slider UI would need, so flipping a toggle doesn't mean re-running the GIS joins.
 
+## Kauai ADU ordinance — real numbers found, one correction (2026-10-14)
+
+Pulled Kauai County's actual zoning code (Chapter 8, Article 15 reference via §8-1.4(i)/8-1.5, via eCode360) rather than continuing to guess. Confirmed, citable:
+
+- **Max floor area: 800 sq ft** for a guest house/additional dwelling unit — this is a real, sourced yield assumption (replaces a planning-literature generic figure for this scenario specifically).
+- **Parking: 1 off-street space required per unit**, separate from the primary dwelling's own parking. This is also the first real anchor number for the Parking Requirement Reduction scenario (below) — previously only a generic "need ordinance data" placeholder.
+- **No owner-occupancy requirement.** The code requires common *ownership* between the ADU and primary dwelling (can't be sold separately, including via condominium property regime) but does not require the owner to live on site. **This corrects what I implied earlier** — I'd offered `require_owner_occupancy` as a slider without checking whether Kauai's real ordinance actually gates on it. It doesn't. The toggle stays in the model (it's a legitimate "what if a future ordinance required this" question, and other jurisdictions do condition ADUs on owner-occupancy), but it should not be presented as reflecting Kauai's current rule.
+- **Eligible zones:** R-1 to R-6, R-10 to R-20, plus CN, CG, AG, and O — broader than the Urban-SLUD-only assumption `run_adu_scenario()` currently uses. Worth revisiting: the current `ludcode == 'U'` gate may be too narrow for Kauai specifically, since AG-zoned parcels outside the Urban district are explicitly eligible zones per this code section.
+- **Still not found:** the per-district minimum lot area table (what "R-6" vs. "R-10" actually require in sqft) — the ecode360 pages that should hold this didn't render it in the sections fetched. The `min_lot_sqft` slider's 7,500 sqft default remains an unconfirmed placeholder; this is still the single open item before the ADU scenario can claim a sourced eligibility threshold.
+
+**Acted on immediately:** replaced the `ludcode == 'U'` (Urban State Land Use District) eligibility proxy with the confirmed zoning-prefix list above (`COUNTY_CONFIG["kauai"]["adu_eligible_zoning_prefixes"]`) — a direct correctness fix, not a slider. Effect: eligible parcels rose from 11,351 to 13,727 at default settings, because AG-zoned parcels outside the Urban district (which the old proxy excluded) are explicitly listed as eligible in the real ordinance.
+
+## Parking Requirement Reduction — first real implementation, Kauai (2026-10-14)
+
+Built on the confirmed finding above: on Kauai, **parking does not gate ADU eligibility** — 1 off-street space is required either way under current code, so removing that requirement doesn't change *which* parcels qualify, it changes how much of each parcel's remaining area the requirement consumes. `run_parking_reduction_scenario()` reports that land-consumption figure (2,745,400 sqft statewide-for-Kauai at current settings) using a 200 sqft/space planning-literature assumption (not Kauai-sourced — same status as the 850 sqft/unit and 1,000 sqft/job figures the El Paso build flagged as generic benchmarks, not local data).
+
+This is a narrower, more honest scope than the original mapping in the Baseline table implied ("need each county's current parking ratio by zoning district") — for Kauai's ADU case specifically, the ratio turned out to be a simple, confirmed constant (1 space/unit), not a per-district table requiring more ordinance research. Whether the same holds for *primary* dwellings (not just ADUs) under Missing Middle is a separate, still-open question.
+
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 
 ## Building footprints — buildable-area / reform-capacity modeling, AUTOMATED 2026-10-14
