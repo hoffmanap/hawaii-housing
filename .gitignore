@@ -36,6 +36,8 @@ Thumbs.db
 data/*
 !data/sample/
 !data/README.md
+!data/DATA_SOURCES.md
+!data/DATA_SOURCES_ALL_STATES.md
 *.csv
 *.parquet
 *.xlsx
@@ -58,3 +60,4 @@ sbom.spdx.json
 __pycache__/
 *.pyc
 .pytest_cache/
+data/raw/
