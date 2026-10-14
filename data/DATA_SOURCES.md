@@ -13,7 +13,15 @@ Primary source: the State of Hawaii's statewide GIS program.
 
 Human-browsable front door: [geoportal.hawaii.gov](https://geoportal.hawaii.gov/) (ArcGIS Hub) and the download index at [planning.hawaii.gov/?p=2137](https://planning.hawaii.gov/?p=2137). Both point at the same underlying `geodata.hawaii.gov` REST services used programmatically by `scripts/fetch_data.py`.
 
-**Known gap — building characteristics (confirmed missing, 2026-10-14):** none of the four county parcel layers carry building square footage or an existing-unit count, which our eligibility logic (underutilization screen, existing-units-by-parcel) depends on. `bldgvalue` (Hawaii County, Maui) is an assessed-dollar proxy for whether a parcel is improved at all, not a size or unit count. Candidates not yet verified: Honolulu's open-data `LEGDAT` table (unit number per TMK) and `ASMTPITT` table (tax-class codes — likely the same `pittcode` scheme seen on Hawaii County/Maui, given the name match) at `opendata.hawaii.gov`; no equivalent source identified yet for Hawaii, Kauai, or Maui counties specifically for unit counts. This must be resolved before `build_model.py`'s eligibility logic is written — see `scripts/fetch_data.py` module docstring and docs/MODEL_AND_ASSUMPTIONS.md.
+**Oahu building-characteristics gap — CLOSED, 2026-10-14.** The state ParcelsZoning service's Oahu layer is cadastral-only, but Honolulu's Real Property Assessment Division (BFS) publishes a separate `CadastralTables` Feature Service (`services.arcgis.com/tNJpAOha4mODLkXz/.../CadastralTables/FeatureServer`), updated weekly, joined to parcels on `tmk`/`parid`:
+
+| Table | Layer | What it actually gives us | Confirmed against live data |
+| --- | --- | --- | --- |
+| `LEGDAT` | 11 | **One row per legal unit on a parcel** — `unitno` is a condo unit label ("508"), `'0'` for non-condo. **`existing_units` for a TMK = count of LEGDAT rows sharing that TMK** (not a field to read). `totsqft` is lot/land area, not building floor area. | 326,944 rows / 172,195 distinct TMKs; 4,720 genuinely multi-unit parcels, one condo tower at 302 units on a single TMK |
+| `ASMTPITT` | 10 | `buildingvalue` — assessed-dollar improvement proxy (same role as Hawaii County/Maui's `bldgvalue`). `ovrclass` — numeric tax-class code, **not yet decoded** (no coded-value domain on the field; hypothesis: maps to Hawaii's standard 16-category statewide land-use classification, unconfirmed) | 327,161 rows |
+| `Zoning - Ohana` (Honolulu's own `Zoning_Reg` service) | 3 | A specific ohana/ADU regulatory **overlay** — only 130 features. **Not** a citywide "ADUs allowed here" layer; `ohana_type` codes also undecoded | 130 rows |
+
+Statewide (non-Oahu) equivalent for Hawaii, Kauai, Maui counties' unit counts specifically: still not identified. Those counties' own `pittcode`/`taxclass` fields (above) remain the closest proxy, same decode gap as `ovrclass`.
 
 **License:** stated as public domain by the Hawaii Office of Planning and Sustainable Development download page, no fee, standard no-warranty/no-legal-representation disclaimer. No redistribution restriction stated. See docs/DATA_PROVENANCE.md for the full citation and access-date record required by the Challenge.
 

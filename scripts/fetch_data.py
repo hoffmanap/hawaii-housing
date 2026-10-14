@@ -5,28 +5,32 @@ four counties, and save to data/raw/ (gitignored — see data/README.md). This
 is the Challenge's required "automated data acquisition process": no parcel
 data is committed to the repo.
 
-KNOWN GAP (read before building eligibility logic on top of this):
-The layers below are CADASTRAL/BOUNDARY data only -- TMK id, acreage,
-geometry, zoning district code. None of them carry building square footage,
-existing unit counts, or an assessed land-use class, which is exactly the
-data our eligibility screens (underutilization, existing-unit count,
-vacant-lot detection) depend on -- see docs/MODEL_AND_ASSUMPTIONS.md and the
-"Known Data Quality Issues" section carried over from the El Paso build's
-README, which hit the same failure mode once already (every parcel looking
-artificially vacant because the building-characteristics field wasn't
-actually populated).
-
-Candidates to join in once confirmed (NOT yet verified -- field schemas
-unconfirmed as of 2026-10-14):
-  - opendata.hawaii.gov "LEGDAT" table (legal data incl. unit number per TMK)
-  - opendata.hawaii.gov "ASMTPITT" table (assessment tax-class / land-use
-    class codes per TMK)
-  - opendata.hawaii.gov "ASMTGIS" table (assessed value / exemption status)
-  - Equivalent county assessor sources for Hawaii County, Kauai, and Maui
-    have not yet been identified at all.
-Do not assume these exist with usable fields -- confirm each one's actual
-schema (and license) before wiring it into build_model.py, and update
-docs/DATA_PROVENANCE.md accordingly.
+OAHU BUILDING-CHARACTERISTICS GAP -- CLOSED 2026-10-14, read this before
+writing eligibility logic:
+The statewide ParcelsZoning layers (Oahu parcels especially) are cadastral/
+boundary data only. The fix is a separate Honolulu BFS Real Property
+Assessment Feature Service ("CadastralTables"), joined to parcels on
+tmk/parid:
+  - LEGDAT (layer 11): one row PER LEGAL UNIT on a parcel, not one row per
+    parcel. `unitno` is a condo unit label ("508"), '0' for a non-condo
+    parcel -- existing_units for a TMK = COUNT of LEGDAT rows sharing that
+    tmk, not a field value. `totsqft` is lot/land area (confirmed against
+    real single-family parcels: 6,285-9,332 sq ft range), analogous to
+    targetlotarea in the El Paso build -- NOT building floor area.
+  - ASMTPITT (layer 10): `buildingvalue` is an assessed-dollar improvement
+    proxy (same role as Hawaii County/Maui's bldgvalue). `ovrclass` is a
+    numeric tax-class code (e.g. "11" observed) -- NOT YET DECODED. No
+    coded-value domain is attached to the field; hypothesis (unconfirmed)
+    is that it maps to Hawaii's standard 16-category statewide land-use
+    classification (Residential, Apartment, Commercial, Agricultural, etc.
+    -- the same categories seen in the counties' published land-use-class
+    record counts). Needed before ovrclass can gate eligibility by land use;
+    until decoded, improvement presence (buildingvalue > 0) and unit count
+    (LEGDAT row count) are the two usable signals for Oahu.
+  - Statewide (non-Oahu) equivalent assessor sources for Hawaii, Kauai, and
+    Maui counties' unit counts specifically are still NOT identified --
+    pittcode on those counties' own parcel layers (see data/DATA_SOURCES.md)
+    is the closest proxy there, same decode gap.
 """
 import argparse
 import json
@@ -35,22 +39,32 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-BASE_URL = "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer"
+STATE_BASE_URL = "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/MapServer"
+HONOLULU_BFS_BASE_URL = (
+    "https://services.arcgis.com/tNJpAOha4mODLkXz/arcgis/rest/services/CadastralTables/FeatureServer"
+)
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
-# layer_id, max records per page (service-enforced cap, confirmed via
-# layer metadata query on 2026-10-14)
+# name: (base_url, layer_id, max records per page). Page sizes are each
+# service's own confirmed maxRecordCount, checked via layer metadata query.
 LAYERS = {
-    "parcels_statewide_tmk": (25, 1000),
-    "parcels_hawaii_county": (5, 1000),
-    "parcels_oahu": (11, 1000),
-    "parcels_kauai": (9, 1000),
-    "parcels_maui": (30, 1000),
-    "zoning_hawaii_county": (2, 1000),
-    "zoning_honolulu": (3, 1000),
-    "zoning_kauai": (29, 1000),
-    "zoning_maui": (33, 1000),
-    "state_land_use_districts": (20, 1000),
+    "parcels_statewide_tmk": (STATE_BASE_URL, 25, 1000),
+    "parcels_hawaii_county": (STATE_BASE_URL, 5, 1000),
+    "parcels_oahu": (STATE_BASE_URL, 11, 1000),
+    "parcels_kauai": (STATE_BASE_URL, 9, 1000),
+    "parcels_maui": (STATE_BASE_URL, 30, 1000),
+    "zoning_hawaii_county": (STATE_BASE_URL, 2, 1000),
+    "zoning_honolulu": (STATE_BASE_URL, 3, 1000),
+    "zoning_kauai": (STATE_BASE_URL, 29, 1000),
+    "zoning_maui": (STATE_BASE_URL, 33, 1000),
+    "state_land_use_districts": (STATE_BASE_URL, 20, 1000),
+    "zoning_ohana_honolulu": (
+        "https://services.arcgis.com/tNJpAOha4mODLkXz/arcgis/rest/services/Zoning_Reg/FeatureServer",
+        3,
+        2000,
+    ),  # confirmed small (130 features) -- a specific ohana regulatory overlay, not citywide ADU eligibility
+    "legdat_honolulu": (HONOLULU_BFS_BASE_URL, 11, 2000),  # unit-level legal data; join key: tmk/parid
+    "asmtpitt_honolulu": (HONOLULU_BFS_BASE_URL, 10, 2000),  # tax-class + building value; join key: tmk/parid
 }
 
 
@@ -74,39 +88,53 @@ def _get_json_with_retries(url: str, attempts: int = 4, base_delay: float = 2.0)
     raise RuntimeError(f"Giving up after {attempts} attempts on {url}") from last_err
 
 
-def fetch_layer(layer_id: int, page_size: int, out_path: Path, sleep: float = 0.2) -> int:
+def fetch_layer(
+    base_url: str, layer_id: int, page_size: int, out_path: Path, sleep: float = 0.2
+) -> int:
     """
-    Page through an ArcGIS REST layer with resultOffset/resultRecordCount
-    and write all features as a single GeoJSON FeatureCollection.
-    Returns the total feature count written.
+    Page through an ArcGIS REST layer OR table with resultOffset/
+    resultRecordCount. Spatial layers are written as a GeoJSON
+    FeatureCollection; non-spatial tables (LEGDAT, ASMTPITT -- confirmed to
+    have no geometry, f=geojson is invalid on them) are written as a plain
+    JSON array of attribute records. Returns the total record count written.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    features = []
+
+    # Tables (no geometry) must be queried with f=json, not f=geojson.
+    probe_url = f"{base_url}/{layer_id}?f=pjson"
+    probe = _get_json_with_retries(probe_url)
+    is_table = probe.get("type") == "Table" or probe.get("geometryType") is None
+
+    records = []
     offset = 0
     while True:
         params = {
             "where": "1=1",
             "outFields": "*",
-            "f": "geojson",
+            "f": "json" if is_table else "geojson",
             "resultOffset": offset,
             "resultRecordCount": page_size,
-            "returnGeometry": "true",
+            "returnGeometry": "false" if is_table else "true",
         }
-        url = f"{BASE_URL}/{layer_id}/query?{urllib.parse.urlencode(params)}"
+        url = f"{base_url}/{layer_id}/query?{urllib.parse.urlencode(params)}"
         payload = _get_json_with_retries(url)
         if "error" in payload:
             raise RuntimeError(f"ArcGIS error on layer {layer_id}: {payload['error']}")
-        page_features = payload.get("features", [])
-        features.extend(page_features)
-        if len(page_features) < page_size:
+        if is_table:
+            page = [f["attributes"] for f in payload.get("features", [])]
+        else:
+            page = payload.get("features", [])
+        records.extend(page)
+        if len(page) < page_size:
             break
         offset += page_size
-        time.sleep(sleep)  # be polite to a free state-run service
+        time.sleep(sleep)  # be polite to free state/county services
 
-    out_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features})
-    )
-    return len(features)
+    if is_table:
+        out_path.write_text(json.dumps(records))
+    else:
+        out_path.write_text(json.dumps({"type": "FeatureCollection", "features": records}))
+    return len(records)
 
 
 def main() -> None:
@@ -120,11 +148,11 @@ def main() -> None:
     args = parser.parse_args()
 
     targets = LAYERS if args.layer == "all" else {args.layer: LAYERS[args.layer]}
-    for name, (layer_id, page_size) in targets.items():
-        out_path = RAW_DIR / f"{name}.geojson"
+    for name, (base_url, layer_id, page_size) in targets.items():
+        out_path = RAW_DIR / f"{name}.json"
         print(f"Fetching {name} (layer {layer_id})...")
-        count = fetch_layer(layer_id, page_size, out_path)
-        print(f"  {count} features -> {out_path}")
+        count = fetch_layer(base_url, layer_id, page_size, out_path)
+        print(f"  {count} records -> {out_path}")
 
 
 if __name__ == "__main__":

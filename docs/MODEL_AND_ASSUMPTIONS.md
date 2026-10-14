@@ -23,18 +23,24 @@ Working sketch to validate before any formula is coded. Each row names the Hawai
 | **Parking Requirement Reduction** | County-level off-street parking minimums (each county sets its own) | Parcel: zoning district, county parking code minimums by use/district | Need each county's current parking ratio by zoning district — not in the GIS layer, has to come from ordinance text |
 | **Development Fee Reduction** | County impact/development fees (differ by county; Honolulu's are documented, outer counties' less so) | County fee schedules | Follow the Rules' standardized $50,000/unit assumption for comparability rather than trying to source four different real fee schedules |
 
-## Confirmed data gap (2026-10-14): existing units and building size
+## Existing units and building size — gap found, then closed for Oahu (2026-10-14)
 
-Direct inspection of all four county parcel layers found **no building square footage or existing-unit-count field on any of them** — the exact data `prep_data.py`'s `get_existing_units()` and the underutilization screen depended on in the El Paso build. What each county's parcel layer *does* carry, confirmed by schema:
+Direct inspection of all four county parcel layers found **no building square footage or existing-unit-count field on any of them** — the exact data `prep_data.py`'s `get_existing_units()` and the underutilization screen depended on in the El Paso build. The state layers alone give:
 
 | County | Land-use/tax classification | Building-presence proxy | Notes |
 | --- | --- | --- | --- |
 | Hawaii | `pittcode` (integer, meaning not yet decoded) | `bldgvalue`/`bldgexempt` (assessed $, not sqft) | |
 | Maui | `pittcode`, same scheme | `bldgvalue`/`bldgexempt` | Identical schema to Hawaii County |
 | Kauai | `taxclass` (text label, e.g. "AGRICULTURAL", "OWNER-OCCUPIED MIXED-USE") | `qpub_link` to Schneider Corp qPublic assessor records | Most directly usable of the four as-is |
-| Honolulu (Oahu) | **None** | **None** | Cadastral-only layer — TMK, acreage, geometry. The most-populous county has the least usable parcel data in this service. |
+| Honolulu (Oahu) | **None** | **None** | Cadastral-only layer in the state service |
 
-Before any eligibility logic is written, this needs to be closed — candidates identified but **not yet verified**: Honolulu's separate open-data tables `LEGDAT` (unit number per TMK) and `ASMTPITT` (likely the same `pittcode` scheme as Hawaii/Maui, based on the name), both at `opendata.hawaii.gov`. No equivalent source yet identified for Hawaii, Kauai, or Maui counties' unit counts specifically. Until this is resolved, `bldgvalue` (Hawaii/Maui) or `taxclass` (Kauai) are the only honest proxies available — a materially weaker eligibility signal than El Paso's `state_cd` + footprint join, and worth stating as a real limitation in the final write-up if it isn't closed.
+**For Oahu specifically, this is now closed.** Honolulu's own Real Property Assessment Division publishes a separate `CadastralTables` Feature Service (confirmed live, see data/DATA_SOURCES.md for the real schema and record counts), joined on TMK:
+- **Existing units** = count of `LEGDAT` rows sharing a TMK (each legal unit — e.g. each condo apartment — is its own row; a plain single-family parcel has exactly one row). Verified: 4,720 genuinely multi-unit TMKs out of 172,195, including condo towers over 300 units.
+- **Improvement/vacancy proxy** = `ASMTPITT.buildingvalue` (assessed dollar value — same role as Hawaii County/Maui's `bldgvalue`, still not a square-footage figure).
+- **Land-use class**: `ASMTPITT.ovrclass` exists but its numeric codes are **not yet decoded** — no coded-value domain ships with the field. Working hypothesis (unconfirmed): maps to Hawaii's standard 16-category statewide land-use classification. Needed before land-use-based eligibility (e.g. "currently single-family only") can be read directly off this field for Oahu; until decoded, eligibility there has to lean on zoning-district code instead.
+- **"Zoning - Ohana"** (a Honolulu-specific layer, confirmed live) is a narrow regulatory overlay (130 features), **not** a citywide ADU-eligibility layer — don't use it to answer "which parcels can add an ADU," only to flag the specific areas it covers.
+
+**Still open:** no equivalent unit-count source identified for Hawaii, Kauai, or Maui counties — `pittcode`/`taxclass` remain the only proxies there, with the same undecoded-class-code problem as Oahu's `ovrclass`. Decoding the land-use class scheme (statewide, if the 16-category hypothesis holds) is the single highest-value remaining research task before eligibility formulas can be written for all four counties consistently.
 
 **Why the State Land Use District matters as the statewide anchor:** every scenario except Development Fee Reduction interacts with whether a parcel sits in the Urban district, since Rural/Agricultural/Conservation districts constrain density regardless of county zoning. This is what makes a genuinely *statewide* model defensible here, rather than four independent county models stitched together — Urban-district boundaries are the one zoning fact that's state-level by law, not just by convenience of data source.
 
