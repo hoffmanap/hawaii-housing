@@ -33,7 +33,9 @@ tmk/parid:
     is the closest proxy there, same decode gap.
 """
 import argparse
+import csv
 import json
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -90,6 +92,90 @@ TIGERWEB_TRACTS_URL = (
     "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer"
 )
 TIGERWEB_TRACTS_LAYER = 4
+
+# Census county FIPS codes for the four Hawaii counties (state FIPS 15).
+# Honolulu County = city & county of Honolulu = Oahu; Hawaii County = the
+# Big Island.
+COUNTY_FIPS = {"honolulu": "003", "hawaii": "001", "kauai": "007", "maui": "009"}
+
+# ACS 5-year detailed table B08301 (Means of Transportation to Work) variable
+# codes actually used here, confirmed against the Census API's own variable
+# listing 2026-10-14 (B08301_002E is "Car, truck, or van:" TOTAL, i.e.
+# drove-alone + carpooled combined, NOT "drove alone" alone -- that's
+# B08301_003E. An earlier pass mislabeled 002E as drove-alone; this matters
+# because "non-car commute share" has to exclude ALL car/truck/van trips,
+# carpooled included, not just solo drivers, to match what Sohoni & Lee 2025
+# (see docs/MODEL_AND_ASSUMPTIONS.md) mean by "alternative modes.")
+ACS_B08301_VARS = ["B08301_001E", "B08301_002E", "B08301_021E"]  # total, car/truck/van, worked from home
+ACS_B01003_VARS = ["B01003_001E"]  # total population
+
+
+def fetch_acs_commute_density(county: str, out_path: Path) -> int:
+    """
+    Tract-level ACS 5-year commute-mode and population data for one Hawaii
+    county, joined with tract land area (from the already-fetched TIGERweb
+    census_tracts.json) to compute population density -- the two proxy
+    variables Sohoni & Lee (2025) use to explain how much parking supply a
+    city actually keeps after removing minimum parking requirements (see
+    docs/MODEL_AND_ASSUMPTIONS.md, "Parking Requirement Reduction" section).
+    Requires a free Census API key (https://api.census.gov/data/key_signup.html)
+    in the CENSUS_API_KEY environment variable -- the Census API returns a
+    "Missing Key" error page (HTTP 200, not JSON) for every vintage without
+    one as of 2026-10-14, so this isn't optional the way the other ArcGIS
+    pulls in this script are.
+    """
+    key = os.environ.get("CENSUS_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "CENSUS_API_KEY environment variable not set -- get a free key at "
+            "https://api.census.gov/data/key_signup.html and set it in .env "
+            "(gitignored) or the environment before running this layer."
+        )
+    county_fips = COUNTY_FIPS[county]
+    get_vars = ",".join(["NAME", *ACS_B08301_VARS, *ACS_B01003_VARS])
+    url = (
+        "https://api.census.gov/data/2022/acs/acs5"
+        f"?get={get_vars}&for=tract:*&in=state:15+county:{county_fips}&key={key}"
+    )
+    payload = _get_json_with_retries(url)
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError(f"Unexpected Census API response for {county}: {str(payload)[:300]}")
+    cols, rows = payload[0], payload[1:]
+
+    tracts_path = out_path.parent / "census_tracts.json"
+    if not tracts_path.exists():
+        raise RuntimeError(
+            f"{tracts_path} not found -- run `fetch_data.py --layer census_tracts` first "
+            "(tract land area comes from there, not the Census API's own tract list)."
+        )
+    tract_features = json.loads(tracts_path.read_text())["features"]
+    area_by_geoid = {f["properties"]["GEOID"]: f["properties"]["AREALAND"] for f in tract_features}
+    sqm_per_sqmi = 2_589_988.11
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            ["GEOID", "name", "population", "commuters_excl_wfh", "pct_alt_mode_commute", "density_per_sqmi"]
+        )
+        for row in rows:
+            record = dict(zip(cols, row))
+            geoid = record["state"] + record["county"] + record["tract"]
+            total = int(record["B08301_001E"])
+            car_truck_van = int(record["B08301_002E"])
+            worked_from_home = int(record["B08301_021E"])
+            population = int(record["B01003_001E"])
+            commuters = total - worked_from_home
+            if commuters <= 0 or population <= 0:
+                continue
+            alt_mode = total - car_truck_van - worked_from_home
+            pct_alt_mode = 100 * alt_mode / commuters
+            aland_sqm = area_by_geoid.get(geoid)
+            density = (population / (aland_sqm / sqm_per_sqmi)) if aland_sqm else None
+            writer.writerow([geoid, record["NAME"], population, commuters, round(pct_alt_mode, 2), density])
+            written += 1
+    return written
 
 
 def fetch_hawaii_census_tracts(out_path: Path) -> int:
@@ -216,11 +302,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--layer",
-        choices=list(LAYERS) + ["building_footprints", "census_tracts", "all"],
+        choices=list(LAYERS) + ["building_footprints", "census_tracts", "acs_commute_density", "all"],
         default="all",
         help="Which named layer to fetch (default: all)",
     )
+    parser.add_argument(
+        "--county",
+        choices=list(COUNTY_FIPS),
+        default="kauai",
+        help="County for --layer acs_commute_density (default: kauai)",
+    )
     args = parser.parse_args()
+
+    if args.layer == "acs_commute_density":
+        out_path = RAW_DIR / f"acs_commute_density_{args.county}.csv"
+        print(f"Fetching acs_commute_density for {args.county} (Census API)...")
+        count = fetch_acs_commute_density(args.county, out_path)
+        print(f"  {count} tracts -> {out_path}")
+        return
 
     if args.layer in ("building_footprints", "all"):
         out_path = RAW_DIR / "building_footprints.json"

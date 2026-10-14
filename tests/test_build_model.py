@@ -148,6 +148,43 @@ def test_development_fee_reduction_is_dollars_not_fabricated_units():
     assert result["estimated_new_units"].iloc[0] == 10.0
 
 
+def test_kauai_parking_reform_context_refuses_without_acs_data():
+    """
+    kauai_parking_reform_context() must say plainly when the ACS fetch
+    hasn't been run, rather than silently fabricating a verdict.
+    """
+    result = build_model.kauai_parking_reform_context(
+        acs_commute_density_csv=Path("/nonexistent/acs_commute_density_kauai.csv")
+    )
+    assert result["available"] is False
+
+
+def test_kauai_parking_reform_context_uses_real_acs_data_not_a_fabricated_ratio(tmp_path):
+    """
+    Regression guard for the 2026-10-14 addition: this function must derive
+    its verdict from real ACS figures (population-weighted across tracts)
+    and the real Sohoni & Lee (2025) city benchmarks, and must NOT compute
+    or expose any kind of "post-reform parking spaces per unit" number --
+    this project explicitly declined to extrapolate the study's low-R^2
+    regression lines to a county below the sample's own range.
+    """
+    import csv
+
+    csv_path = tmp_path / "acs_commute_density_kauai.csv"
+    with csv_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["GEOID", "name", "population", "commuters_excl_wfh", "pct_alt_mode_commute", "density_per_sqmi"])
+        writer.writerow(["15007000100", "Tract A", 1000, 500, 10.0, 100.0])
+        writer.writerow(["15007000200", "Tract B", 1000, 500, 20.0, 300.0])
+
+    result = build_model.kauai_parking_reform_context(acs_commute_density_csv=csv_path)
+    assert result["available"] is True
+    assert result["countywide_alt_mode_commute_pct"] == 15.0  # simple population-weighted mean here
+    assert result["countywide_density_per_sqmi"] == 200.0
+    assert "San Francisco, CA" in result["study_city_benchmarks"]
+    assert not any("per_unit" in k for k in result)  # no fabricated per-unit ratio
+
+
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     """
     Kauai's taxclass field is the only one so far with an owner-occupied

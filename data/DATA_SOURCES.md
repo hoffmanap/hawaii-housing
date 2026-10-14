@@ -63,6 +63,14 @@ Live-data check against the full `ASMTPITT` table (327,161 rows) found this tabl
 - **Open modeling question:** whether buildable area = parcel area − footprint area directly, or needs a per-zoning-district coverage-ratio/setback adjustment (see docs/MODEL_AND_ASSUMPTIONS.md).
 - **License:** Microsoft's footprints are ODbL; confirm Google's V3 Open Buildings license terms (and the combined dataset's effective license) before this goes in DATA_PROVENANCE.md's formal citation table.
 
+## ACS commute mode + density: Parking Requirement Reduction transferability check (added 2026-10-14)
+
+**Census Bureau ACS 5-year detailed tables**, tract-level, via the Census API: `B08301` (Means of Transportation to Work — used for non-car commute share) and `B01003` (total population, combined with TIGERweb tract land area for density). `fetch_data.py --layer acs_commute_density --county <county>` writes `data/raw/acs_commute_density_{county}.csv`.
+
+- **Role:** lets the model place a Hawaii county on the same two axes (non-car commute share, population density) that Sohoni & Lee (2025) — see `docs/MODEL_AND_ASSUMPTIONS.md`'s Parking Requirement Reduction section — use to explain how much parking supply cities actually keep after removing minimum parking requirements, instead of applying a borrowed elasticity number blind.
+- **Access:** requires a **free Census API key** (https://api.census.gov/data/key_signup.html) in the `CENSUS_API_KEY` environment variable (or `.env`, gitignored). Confirmed 2026-10-14: every ACS vintage returns an HTML "Missing Key" page (HTTP 200, not JSON) without one — this is not optional the way the other ArcGIS pulls in this repo are.
+- **Verified live, Kauai:** 17 tracts, population-weighted non-car commute share ~5.4%, population-weighted density ~675 people/sq mi.
+
 ## Supplementary national datasets (for baseline / economic context)
 
 - U.S. Census Bureau / ACS — demographic and housing stock context

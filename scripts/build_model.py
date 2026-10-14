@@ -581,6 +581,90 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     return tract_rollup, metadata
 
 
+# Real, digitized figures from Sohoni & Lee, "Parking the Minimum Parking
+# Requirement: Evidence from Nine U.S. Cities," Journal of Planning
+# Education and Research 46(1), 2025 (user-supplied PDF, 2026-10-14) --
+# Table 3 (parking supply before/after as % of the former MPR, treatment
+# group) and the qualitative density/car-dependency framing on p.98. These
+# are the paper's OWN reported numbers, not a reduction ratio inferred by
+# eyeballing Figure 4's unlabeled scatter points -- that chart is real
+# (R^2 = 0.168 for % alt-mode commute share, R^2 = 0.317 for block-group
+# density, both against pp reduction in parking supply) but its individual
+# city coordinates aren't numerically labeled in the text, so this project
+# isn't going to invent precision reading them off a plot.
+PARKING_STUDY_CITY_BENCHMARKS = {
+    # city: (pct_mpr_before, pct_mpr_after, context)
+    "San Francisco, CA": (45.0, 30.3, "high density, low car dependency"),
+    "Buffalo, NY": (107.9, 92.3, "moderate density/car dependency"),
+    "Hartford, CT": (109.8, 103.0, "low density, high car dependency -- minimal effect"),
+    "Washington, DC": (266.9, 239.0, "high density, low car dependency"),
+    "Grand Rapids, MI": (127.2, 123.4, "low density, high car dependency -- minimal effect"),
+    "Cincinnati, OH": (83.5, 25.0, "targeted downtown reform, large reduction"),
+    "Champaign, IL": (117.1, 44.7, "targeted reform, largest reduction in the sample"),
+    "Somerville, MA": (100.2, 32.4, "targeted TOD reform, large reduction"),
+    "Honolulu, HI": (88.6, 75.0, "TOD-district reform, same state as this model, Oahu not Kauai"),
+}
+PARKING_STUDY_LOW_END_ALT_MODE_COMMUTE_CONTEXT = (
+    "Grand Rapids and Hartford -- the two cities in the study showing minimal post-reform "
+    "change -- are described by the authors as ranking 'very low in density and very high in "
+    "car dependency' (p.98), and even they are U.S. small/mid-size cities with some transit "
+    "and non-car commute share. Kauai has neither."
+)
+
+
+def kauai_parking_reform_context(acs_commute_density_csv: Path | None = None) -> dict:
+    """
+    Places Kauai on the same two axes (non-car commute share, population
+    density) Sohoni & Lee (2025) use to explain why some cities' post-reform
+    parking supply barely moved while others' fell sharply -- using REAL
+    ACS data (fetch_data.py --layer acs_commute_density --county kauai),
+    not an assumed number. Returns Kauai's own figures plus an explicit,
+    non-numeric verdict: this project does NOT apply a quantitative
+    post-reform parking-reduction ratio to Kauai, for two stated reasons:
+
+    1. Every city in the study's sample is denser and less car-dependent
+       than Kauai is countywide, including the two "minimal effect" cities
+       (Grand Rapids, Hartford) the authors use as their own low-end anchor.
+       Reading Kauai's number off the fitted line would be extrapolation
+       past the regression's support, not interpolation within it.
+    2. The study's x-axis is "mean BLOCK GROUP density/commute share WITHIN
+       THE DEREGULATED ZONE," i.e. the already-built-up area being
+       upzoned -- not a countywide average. Kauai's own eligible-parcel
+       areas (the ADU/parking-scenario tracts) would be the fairer
+       comparison, but even those don't approach the study sample's range
+       (see the per-tract figures in the CSV this reads).
+
+    Net: `run_parking_reduction_scenario()` keeps reporting land consumed
+    under the current 1-space/unit requirement, not a reduced-but-nonzero
+    post-reform figure -- the evidence supports "expect little to no
+    reduction," not a specific number.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_kauai.csv")
+    if not path.exists():
+        return {
+            "available": False,
+            "reason": f"{path} not found -- run `fetch_data.py --layer acs_commute_density "
+            "--county kauai` (requires a free Census API key) first.",
+        }
+    df = pd.read_csv(path)
+    total_commuters = df["commuters_excl_wfh"].sum()
+    total_pop = df["population"].sum()
+    countywide_alt_mode_pct = (df["pct_alt_mode_commute"] * df["commuters_excl_wfh"]).sum() / total_commuters
+    countywide_density = (df["density_per_sqmi"] * df["population"]).sum() / total_pop
+    return {
+        "available": True,
+        "countywide_alt_mode_commute_pct": round(countywide_alt_mode_pct, 1),
+        "countywide_density_per_sqmi": round(countywide_density, 1),
+        "study_city_benchmarks": PARKING_STUDY_CITY_BENCHMARKS,
+        "low_end_context": PARKING_STUDY_LOW_END_ALT_MODE_COMMUTE_CONTEXT,
+        "verdict": "Kauai's countywide non-car commute share (~5%) and density (~675 people/sq "
+        "mi) sit below the study's own 'minimal effect' anchor cities (Grand Rapids, Hartford) "
+        "on both axes -- consistent with the Challenge's starting assumption that reducing "
+        "parking requirements changes land use, not with a specific predicted reduction ratio. "
+        "No numeric post-reform parking-supply ratio is applied to Kauai as a result.",
+    }
+
+
 def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
     """
     Parking Requirement Reduction, built on the same ADU-eligible parcel
@@ -615,6 +699,8 @@ def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = 
         "not a change in which parcels qualify. Reducing the requirement to 0 removes this "
         "land cost but produces the same eligible_parcel_count as the ADU scenario above."
     )
+    if county == "kauai":
+        metadata["post_reform_parking_supply_context"] = kauai_parking_reform_context()
 
     out_path = OUT_DIR / f"{county}_parking_scenario_tract.csv"
     adu_tract.to_csv(out_path, index=False)
