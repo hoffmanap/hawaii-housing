@@ -185,6 +185,41 @@ def test_kauai_parking_reform_context_uses_real_acs_data_not_a_fabricated_ratio(
     assert not any("per_unit" in k for k in result)  # no fabricated per-unit ratio
 
 
+def test_kauai_pro_forma_fee_reduction_moves_excess_value_by_exactly_the_fee():
+    """
+    The whole point of the 'excess value' feasibility test is that a
+    development-fee change is a dollar-for-dollar line item -- it must not
+    silently touch hard cost, land cost, financing, or required profit.
+    """
+    full_fee = build_model.kauai_development_fee_reduction_feasibility(
+        "townhome_for_sale", "market", development_fee_usd=50_000
+    )
+    no_fee = build_model.kauai_development_fee_reduction_feasibility(
+        "townhome_for_sale", "market", development_fee_usd=0
+    )
+    assert no_fee["excess_value_usd"] - full_fee["excess_value_usd"] == 50_000
+    assert no_fee["hard_cost_usd"] == full_fee["hard_cost_usd"]
+    assert no_fee["land_cost_usd"] == full_fee["land_cost_usd"]
+    assert no_fee["financing_cost_usd"] == full_fee["financing_cost_usd"]
+
+
+def test_kauai_pro_forma_fee_reduction_does_not_flip_affordable_feasibility():
+    """
+    Regression guard for the real (not fabricated) finding this model
+    produces: a $50k/unit fee reduction is nowhere near large enough to
+    make Lihu'e Town Core affordable-sale townhomes pencil under these
+    real, cited cost/revenue assumptions -- consistent with Terner
+    Center's own California finding that fee cuts alone rarely flip
+    feasibility. If this assertion ever starts failing it means an input
+    constant changed, which should be a deliberate, documented edit citing
+    its own source -- not a silent drift.
+    """
+    result = build_model.kauai_development_fee_reduction_feasibility(
+        "townhome_for_sale", "affordable", development_fee_usd=0
+    )
+    assert result["feasible"] is False
+
+
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     """
     Kauai's taxclass field is the only one so far with an owner-occupied

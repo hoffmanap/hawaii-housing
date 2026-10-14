@@ -71,6 +71,12 @@ Live-data check against the full `ASMTPITT` table (327,161 rows) found this tabl
 - **Access:** requires a **free Census API key** (https://api.census.gov/data/key_signup.html) in the `CENSUS_API_KEY` environment variable (or `.env`, gitignored). Confirmed 2026-10-14: every ACS vintage returns an HTML "Missing Key" page (HTTP 200, not JSON) without one — this is not optional the way the other ArcGIS pulls in this repo are.
 - **Verified live, Kauai:** 17 tracts, population-weighted non-car commute share ~5.4%, population-weighted density ~675 people/sq mi.
 
+## Development pro forma inputs: Kauai-specific (added 2026-10-14)
+
+**State of Hawaii OPSD, *Financial Analysis of TOD Infrastructure Funding and Financing Options*** (HR&A Advisors, Group Pacific, PBR Hawai'i, CBRE, CoStar/Zillow — user-supplied PDF, deliverables dated July/Sept. 2023; https://files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDTODInfra_2022/3.Deliverable3_20230908_HawaiiTODInfraFin-FullFinal.pdf). Appendix "Real Estate Assumptions" table gives, per Hawaii submarket including Lihu'e Town Core (Kaua'i): construction hard cost per GSF by product type, land price per SF/acre, financing terms (loan-to-cost, interest rates, fees), developer profit margins, and market/affordable sale prices and rents — used in `build_model.kauai_development_fee_reduction_feasibility()`. Also gives a real Hawaii "excess value" feasibility test (market value − total development cost − required developer return) used for the same function's methodology. See `docs/MODEL_AND_ASSUMPTIONS.md`'s Development Fee Reduction section for the full citation and result.
+
+A companion OPSD deliverable (https://files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDTODInfra_2022/1.Deliverable1_20221102_HawaiiTODInfraFin.pdf, Nov. 2022) covers TOD infrastructure project costs (electrical, water/wastewater) and financing-capacity context for four pilot areas (Oahu, Maui, Kauai, Hawaii County) — reviewed, no station-specific density/FAR or parking figures found in the visible text; flagged as background context, not a direct model input.
+
 ## Supplementary national datasets (for baseline / economic context)
 
 - U.S. Census Bureau / ACS — demographic and housing stock context

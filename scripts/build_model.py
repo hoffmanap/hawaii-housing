@@ -742,6 +742,111 @@ def run_development_fee_reduction_scenario(
     return result
 
 
+# Real, Kauai-specific development pro forma inputs, digitized 2026-10-14 from
+# the "Real Estate Assumptions" table (Lihu'e Town Core / Kaua'i column) in
+# the State of Hawaii OPSD's "Financial Analysis of TOD Infrastructure
+# Funding and Financing Options" (HR&A Advisors et al., July/Sept. 2023,
+# user-supplied PDF). This is what the Terner Center pro forma methodology
+# (see "Development feasibility (pro forma) research" section above) was
+# missing: real Hawaii hard-cost, land-value, financing, and sale-price
+# inputs, instead of California submarket data. Sourced in the original
+# table to Group Pacific/PBR Hawai'i (hard costs), HR&A (soft costs,
+# developer profit), CBRE (financing terms), and CoStar/Zillow (sale
+# prices) -- not this project's own estimate.
+KAUAI_LIHUE_PRO_FORMA_INPUTS = {
+    "townhome_for_sale": {
+        "unit_size_gsf": 1_500,
+        "hard_cost_per_gsf_usd": 420,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 1_179_403, "affordable": 604_600},
+    },
+    "lowrise_for_sale": {
+        "unit_size_gsf": 840,  # 700 GSF rental base x 1.20 for-sale size premium
+        "hard_cost_per_gsf_usd": 594,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 637_974, "affordable": 302_300},
+    },
+}
+KAUAI_LIHUE_LAND_PRICE_PER_BUILDING_GSF_USD = 36  # "Average Price per SF, Mid- and High-Density Residential"
+KAUAI_LIHUE_FINANCING = {
+    "loan_to_cost": 0.60,
+    "construction_interest_rate": 0.07,
+    "construction_loan_fee_pct": 0.015,
+    "permanent_loan_fee_pct": 0.010,
+    "construction_period_months": 24,
+}
+KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE = 0.15  # "Residential for sale: Profit Margin (%)"
+
+
+def kauai_development_fee_reduction_feasibility(
+    typology: str = "townhome_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+) -> dict:
+    """
+    A real, Kauai-specific development pro forma for the Lihu'e Town Core
+    submarket, answering the question run_development_fee_reduction_scenario()
+    explicitly declined to answer with a fabricated elasticity: does reducing
+    the Challenge's standardized $50,000/unit development fee actually change
+    whether a project pencils?
+
+    Uses the "excess value" feasibility test from the same source report
+    (market value minus total development cost minus the developer's
+    required return -- see docs/MODEL_AND_ASSUMPTIONS.md): a project is
+    feasible when excess_value >= 0, and a fee reduction adds dollar-for-
+    dollar to excess_value without otherwise changing the pro forma.
+
+    TWO EXPLICIT SIMPLIFICATIONS, not present in the source report's own
+    (more detailed) model -- this is a transparent approximation, not a
+    claim of matching HR&A/CBRE's full model exactly:
+    1. Land cost is allocated as $/building-GSF (the source table's land
+       price per sqft of *residential* building area), not a true site-area
+       /FAR-based allocation -- Kauai's per-district FAR/density standard
+       for Lihu'e isn't in this model's data yet (see the ADU min-lot-sqft
+       gap flagged elsewhere in this doc).
+    2. Financing cost uses a single average-outstanding-balance
+       approximation (loan amount x rate x term x 0.5, plus origination
+       fees) rather than the source's presumed full monthly draw schedule --
+       a reasonable estimate, not a dollar-precise reproduction.
+    """
+    inputs = KAUAI_LIHUE_PRO_FORMA_INPUTS[typology]
+    unit_size = inputs["unit_size_gsf"]
+    hard_cost = unit_size * inputs["hard_cost_per_gsf_usd"]
+    soft_cost = hard_cost * inputs["soft_cost_pct_of_hard"]
+    land_cost = unit_size * KAUAI_LIHUE_LAND_PRICE_PER_BUILDING_GSF_USD
+    cost_before_financing_and_fee = hard_cost + soft_cost + land_cost
+
+    fin = KAUAI_LIHUE_FINANCING
+    loan_amount = cost_before_financing_and_fee * fin["loan_to_cost"]
+    construction_years = fin["construction_period_months"] / 12
+    financing_interest = loan_amount * fin["construction_interest_rate"] * construction_years * 0.5
+    financing_fees = loan_amount * (fin["construction_loan_fee_pct"] + fin["permanent_loan_fee_pct"])
+    financing_cost = financing_interest + financing_fees
+
+    total_development_cost = cost_before_financing_and_fee + financing_cost + development_fee_usd
+    sale_price = inputs["sale_price_per_unit_usd"][affordability]
+    required_developer_profit = sale_price * KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE
+    excess_value = sale_price - total_development_cost - required_developer_profit
+
+    return {
+        "typology": typology,
+        "affordability": affordability,
+        "development_fee_usd": development_fee_usd,
+        "hard_cost_usd": round(hard_cost),
+        "soft_cost_usd": round(soft_cost),
+        "land_cost_usd": round(land_cost),
+        "financing_cost_usd": round(financing_cost),
+        "total_development_cost_usd": round(total_development_cost),
+        "sale_price_usd": sale_price,
+        "required_developer_profit_usd": round(required_developer_profit),
+        "excess_value_usd": round(excess_value),
+        "feasible": excess_value >= 0,
+        "source": "HR&A Advisors et al., 'Financial Analysis of TOD Infrastructure Funding and "
+        "Financing Options,' State of Hawaii OPSD, 2023 -- Real Estate Assumptions table, "
+        "Lihu'e Town Core (Kaua'i) column.",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
