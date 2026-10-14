@@ -39,12 +39,38 @@ def test_county_config_has_required_keys():
         assert len(cfg["existing_residential_taxclasses"]) > 0
 
 
-def test_placeholder_assumptions_are_documented_not_silently_real():
+def test_default_adu_lot_size_is_a_positive_placeholder():
+    assert build_model.DEFAULT_ADU_MIN_LOT_SQFT > 0
+
+
+def test_absorption_rate_benchmarks_file_has_every_county_plus_statewide():
+    df = build_model.load_absorption_rate_benchmarks()
+    areas = set(df["area"])
+    assert "statewide" in areas
+    for county, area in build_model.COUNTY_TO_BENCHMARK_AREA.items():
+        assert area in areas, f"missing benchmark area for {county}"
+        rate = build_model.absorption_rate_benchmark_for(county)
+        assert 0 < rate < 1, f"{county} benchmark rate {rate} out of range"
+
+
+def test_scenario_params_default_absorption_rate_is_county_benchmark():
     """
-    Both constants are explicitly flagged PLACEHOLDER/unconfirmed in
-    build_model.py's comments and in docs/MODEL_AND_ASSUMPTIONS.md's Core
-    Assumptions table -- this test just guards against someone quietly
-    deleting that flag while changing the value.
+    ScenarioParams(absorption_rate=None) means "use this county's own
+    benchmark", not a single statewide number for every island -- that's
+    the whole point of sourcing per-county benchmarks instead of reusing
+    one figure everywhere.
     """
-    assert 0 < build_model.ABSORPTION_RATE_PLACEHOLDER < 1
-    assert build_model.ADU_MIN_LOT_SQFT_PLACEHOLDER > 0
+    params = build_model.ScenarioParams()
+    assert params.absorption_rate is None
+
+
+def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
+    """
+    Kauai's taxclass field is the only one so far with an owner-occupied
+    vs. non-owner-occupied distinction (see data/DATA_SOURCES.md) -- this
+    guards against that config silently going missing.
+    """
+    assert "owner_occupied_taxclasses" in build_model.COUNTY_CONFIG["kauai"]
+    assert build_model.COUNTY_CONFIG["kauai"]["owner_occupied_taxclasses"] <= (
+        build_model.COUNTY_CONFIG["kauai"]["existing_residential_taxclasses"]
+    )

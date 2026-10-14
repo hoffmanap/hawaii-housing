@@ -68,21 +68,65 @@ COUNTY_CONFIG = {
             "OWNER-OCCUPIED MIXED-USE",
             "LONG TERM AFFORDABLE RENTAL",
         },
+        # Subset of the above that Kauai's own tax-class field already
+        # flags as owner-occupied -- lets the owner-occupancy requirement
+        # toggle actually do something for this county without any new
+        # data. Other counties' taxclass/pittcode schemes don't make this
+        # distinction (see data/DATA_SOURCES.md), so the toggle will need
+        # a different data source wired in before it works there.
+        "owner_occupied_taxclasses": {"OWNER-OCCUPIED", "OWNER-OCCUPIED MIXED-USE"},
     },
 }
 
-# PLACEHOLDER, unconfirmed -- Kauai County's actual ADU/detached-dwelling
-# minimum lot size needs to come from ordinance text (see the open
-# question logged in docs/MODEL_AND_ASSUMPTIONS.md under ADUs). 7,500 sqft
-# is a common minimum-lot threshold across Hawaii county codes but has NOT
-# been verified against Kauai's specific ordinance.
-ADU_MIN_LOT_SQFT_PLACEHOLDER = 7_500
+# Default ADU eligibility rule -- a STARTING POINT meant to be overridden
+# via build_county()'s keyword arguments (see ScenarioParams below), not a
+# sourced conclusion. 7,500 sqft is a common minimum-lot threshold across
+# Hawaii county codes but has NOT been verified against Kauai's specific
+# ADU ordinance -- that ordinance-text research is still the open item
+# logged in docs/MODEL_AND_ASSUMPTIONS.md under the ADU scenario mapping.
+# The point of exposing this as a parameter (eventually a UI slider) is to
+# let someone show how eligible-parcel counts change as the minimum moves,
+# rather than asserting one number as correct.
+DEFAULT_ADU_MIN_LOT_SQFT = 7_500
 
-# PLACEHOLDER -- same status as the "TBD" absorption rate in
-# docs/MODEL_AND_ASSUMPTIONS.md's Core Assumptions table. Not sourced from
-# Hawaii permit-pace data yet; purely here so the pipeline produces a
-# number to sanity-check, not a defensible estimate.
-ABSORPTION_RATE_PLACEHOLDER = 0.08
+# County/island-specific empirical benchmarks for the absorption rate --
+# the share of eligible parcels assumed to redevelop over a planning
+# horizon (see docs/MODEL_AND_ASSUMPTIONS.md, "Market Absorption Rate").
+# These are NOT the same quantity El Paso's 8% approximated (there's no
+# historical eligible-parcel baseline for Hawaii either, same gap El
+# Paso had before its own calibration) -- they're the best available
+# empirical proxy: each county's average annual building-permit count
+# over 2016-2025 as a share of its 2023 housing stock, scaled to a
+# 10-year planning horizon. Source: FRED Building Permits Survey series
+# (BPPRIV015001/3/7/9, HIBPPRIV) x Hawaii DBEDT 2023 housing-unit
+# estimates (CO-EST2023-HU-15) -- full citations in
+# data/reference/absorption_rate_benchmarks.csv, which this loads from
+# rather than hardcoding, so updating the benchmark data doesn't require
+# touching this file.
+ABSORPTION_RATE_BENCHMARKS_FILE = (
+    Path(__file__).parent.parent / "data" / "reference" / "absorption_rate_benchmarks.csv"
+)
+DEFAULT_ABSORPTION_RATE = 0.067  # statewide decade-equivalent benchmark, see CSV above
+
+COUNTY_TO_BENCHMARK_AREA = {
+    "honolulu": "honolulu_oahu",
+    "kauai": "kauai_county",
+    "hawaii": "hawaii_county_bigisland",
+    "maui": "maui_county",
+}
+
+
+def load_absorption_rate_benchmarks() -> pd.DataFrame:
+    return pd.read_csv(ABSORPTION_RATE_BENCHMARKS_FILE)
+
+
+def absorption_rate_benchmark_for(county: str) -> float:
+    """Decade-equivalent permit-to-stock ratio for one county/island, as a
+    fraction (e.g. 0.063 for Kauai) -- a slider default, not a fixed value."""
+    df = load_absorption_rate_benchmarks()
+    area = COUNTY_TO_BENCHMARK_AREA[county]
+    row = df.loc[df["area"] == area].iloc[0]
+    return row["decade_equivalent_pct_10yr"] / 100.0
 
 
 def _load_geojson(path: Path) -> gpd.GeoDataFrame:
@@ -174,11 +218,15 @@ def build_county(county: str) -> dict[str, Path]:
     parcels["has_existing_residential"] = parcels[cfg["taxclass_field"]].isin(
         cfg["existing_residential_taxclasses"]
     )
+    owner_occ_classes = cfg.get("owner_occupied_taxclasses")
+    parcels["is_owner_occupied"] = (
+        parcels[cfg["taxclass_field"]].isin(owner_occ_classes) if owner_occ_classes else pd.NA
+    )
 
     parcel_cols = [
         pid, "GEOID", cfg["zoning_field"], "ludcode", cfg["taxclass_field"],
         "parcel_area_sqft", "footprint_area_sqft", "coverage_ratio", "remaining_area_sqft",
-        "lot_size_band", "coverage_band", "has_existing_residential",
+        "lot_size_band", "coverage_band", "has_existing_residential", "is_owner_occupied",
     ]
     parcel_table = parcels[parcel_cols].rename(columns={cfg["zoning_field"]: "zoning", cfg["taxclass_field"]: "taxclass"})
 
@@ -188,29 +236,95 @@ def build_county(county: str) -> dict[str, Path]:
         .reset_index()
     )
 
-    adu_eligible = parcel_table[
+    parcel_out = OUT_DIR / f"{county}_parcel_level.csv"
+    bucket_out = OUT_DIR / f"{county}_bucket_rollup_tract.csv"
+    parcel_table.to_csv(parcel_out, index=False)
+    bucket_rollup.to_csv(bucket_out, index=False)
+
+    return {"parcel_level": parcel_out, "bucket_rollup": bucket_out}
+
+
+class ScenarioParams:
+    """
+    The "sliders" for the ADU scenario. Every field here is meant to be
+    adjusted by a user (or swept across a range) rather than treated as a
+    fixed assumption -- that's the whole point of exposing them
+    separately from the expensive geometry/bucketing step in
+    build_county(), which only needs to run once per county no matter how
+    many times these are changed. Defaults are starting points, not
+    sourced conclusions -- see the per-field notes.
+    """
+
+    def __init__(
+        self,
+        min_lot_sqft: float = DEFAULT_ADU_MIN_LOT_SQFT,
+        absorption_rate: float | None = None,  # None -> county's own benchmark
+        require_owner_occupancy: bool = False,
+        require_parking: bool = False,
+    ):
+        self.min_lot_sqft = min_lot_sqft
+        self.absorption_rate = absorption_rate
+        self.require_owner_occupancy = require_owner_occupancy
+        self.require_parking = require_parking
+
+
+def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
+    """
+    Cheap re-run against the already-bucketed parcel table (no geometry
+    work) -- this is the function a slider UI would call on every drag.
+    Returns (tract-level results, metadata about what was/wasn't applied).
+    """
+    params = params or ScenarioParams()
+    parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
+    if not parcel_path.exists():
+        raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
+    parcel_table = pd.read_csv(parcel_path)
+
+    absorption_rate = (
+        params.absorption_rate if params.absorption_rate is not None else absorption_rate_benchmark_for(county)
+    )
+
+    eligible = (
         (parcel_table["ludcode"] == "U")
         & parcel_table["has_existing_residential"]
-        & (parcel_table["parcel_area_sqft"] >= ADU_MIN_LOT_SQFT_PLACEHOLDER)
-    ]
+        & (parcel_table["parcel_area_sqft"] >= params.min_lot_sqft)
+    )
+    if params.require_owner_occupancy:
+        eligible &= parcel_table["is_owner_occupied"].fillna(False)
+
+    adu_eligible = parcel_table[eligible]
     adu_tract = (
         adu_eligible.groupby("GEOID", observed=True)
         .size()
         .rename("eligible_parcel_count")
         .reset_index()
     )
-    adu_tract["estimated_new_units"] = (
-        adu_tract["eligible_parcel_count"] * ABSORPTION_RATE_PLACEHOLDER
-    ).round(1)
+    adu_tract["estimated_new_units"] = (adu_tract["eligible_parcel_count"] * absorption_rate).round(1)
 
-    parcel_out = OUT_DIR / f"{county}_parcel_level.csv"
-    bucket_out = OUT_DIR / f"{county}_bucket_rollup_tract.csv"
-    adu_out = OUT_DIR / f"{county}_adu_scenario_tract.csv"
-    parcel_table.to_csv(parcel_out, index=False)
-    bucket_rollup.to_csv(bucket_out, index=False)
-    adu_tract.to_csv(adu_out, index=False)
+    metadata = {
+        "min_lot_sqft": params.min_lot_sqft,
+        "absorption_rate": absorption_rate,
+        "absorption_rate_was_county_benchmark": params.absorption_rate is None,
+        "require_owner_occupancy": params.require_owner_occupancy,
+        "require_parking": params.require_parking,
+    }
+    if params.require_owner_occupancy and county not in {
+        c for c, v in COUNTY_CONFIG.items() if v.get("owner_occupied_taxclasses")
+    }:
+        metadata["owner_occupancy_warning"] = (
+            f"{county} has no owner-occupied/non-owner-occupied taxclass distinction -- "
+            "this toggle had no effect."
+        )
+    if params.require_parking:
+        metadata["parking_warning"] = (
+            "NOT YET IMPLEMENTED -- no county parking-ratio ordinance data has been sourced "
+            "(see docs/MODEL_AND_ASSUMPTIONS.md, Parking Requirement Reduction mapping). "
+            "This toggle is recorded but currently changes nothing."
+        )
 
-    return {"parcel_level": parcel_out, "bucket_rollup": bucket_out, "adu_scenario": adu_out}
+    out_path = OUT_DIR / f"{county}_adu_scenario_tract.csv"
+    adu_tract.to_csv(out_path, index=False)
+    return adu_tract, metadata
 
 
 def main() -> None:
@@ -218,6 +332,10 @@ def main() -> None:
     parser.add_argument(
         "--county", choices=list(COUNTY_CONFIG), default="kauai", help="Which county to build (default: kauai)"
     )
+    parser.add_argument("--min-lot-sqft", type=float, default=DEFAULT_ADU_MIN_LOT_SQFT)
+    parser.add_argument("--absorption-rate", type=float, default=None, help="Overrides the county benchmark")
+    parser.add_argument("--require-owner-occupancy", action="store_true")
+    parser.add_argument("--require-parking", action="store_true")
     args = parser.parse_args()
 
     print(f"Building model for {args.county}...")
@@ -225,6 +343,16 @@ def main() -> None:
     for name, path in outputs.items():
         n_rows = sum(1 for _ in path.open()) - 1
         print(f"  {name}: {n_rows} rows -> {path}")
+
+    params = ScenarioParams(
+        min_lot_sqft=args.min_lot_sqft,
+        absorption_rate=args.absorption_rate,
+        require_owner_occupancy=args.require_owner_occupancy,
+        require_parking=args.require_parking,
+    )
+    adu_tract, metadata = run_adu_scenario(args.county, params)
+    print(f"  adu_scenario: {len(adu_tract)} rows -> {OUT_DIR / f'{args.county}_adu_scenario_tract.csv'}")
+    print(f"  scenario params: {metadata}")
 
 
 if __name__ == "__main__":

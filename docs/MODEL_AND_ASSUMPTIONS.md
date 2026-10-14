@@ -85,6 +85,36 @@ The pipeline above is now real code (`scripts/build_model.py`), not just a plan.
 
 Outputs land in `data/processed/` (gitignored, same as `data/raw/` — regenerate with `python scripts/build_model.py --county kauai`): `{county}_parcel_level.csv`, `{county}_bucket_rollup_tract.csv`, `{county}_adu_scenario_tract.csv`.
 
+## Absorption-rate benchmarks, sourced (added 2026-10-14)
+
+Rather than a single statewide default, each county/island gets its own empirical benchmark, computed as average annual building permits (2016–2025) ÷ 2023 housing stock, scaled to a 10-year horizon — the same kind of permit-pace calibration the El Paso build's documentation recommends, applied per island because Hawaii's islands diverge meaningfully in build pace (nearly 2x between Honolulu and Hawaii County):
+
+| Area | 2023 housing units | Avg. annual permits (2016–2025) | Decade-equivalent rate |
+| --- | --- | --- | --- |
+| Statewide (default) | 572,063 | 3,849 | **6.7%** |
+| Honolulu / Oahu | 376,209 | 1,886 | **5.0%** |
+| Hawaii County (Big Island) | 91,546 | 1,006 | **11.0%** |
+| Maui County | 73,563 | 764 | **10.4%** |
+| Kauai County | 30,631 | 193 | **6.3%** |
+
+Source: FRED Building Permits Survey series `BPPRIV015001` (Hawaii County), `BPPRIV015003` (Honolulu), `BPPRIV015007` (Kauai), `BPPRIV015009` (Maui), `HIBPPRIV` (statewide); housing-unit denominators from Hawaii DBEDT's `CO-EST2023-HU-15`. Full table at `data/reference/absorption_rate_benchmarks.csv`.
+
+**What this is and isn't:** this measures total permits against total existing housing stock, not permits against an *eligible-parcel* universe under a specific reform — that historical baseline doesn't exist for Hawaii any more than it existed for El Paso before calibration. Treat these as defensible starting points for the slider, not as validated absorption rates for any one scenario. Honolulu's comparatively low rate (5.0%) likely reflects its much larger, more built-out existing stock rather than a slower construction *pace* in absolute terms (1,886 units/year is still the largest of the four) — a reminder that the ratio is stock-relative, not a measure of activity level on its own.
+
+**Implementation:** `build_model.ScenarioParams(absorption_rate=None)` (the default) pulls the calling county's own benchmark via `absorption_rate_benchmark_for()`; passing an explicit value overrides it. This is the mechanism a future slider UI would call on every drag — see below.
+
+## Scenario parameters as sliders, not fixed rules (added 2026-10-14)
+
+Per your direction: rather than asserting one ADU eligibility rule, the model exposes the rule's components as adjustable parameters (`build_model.ScenarioParams`), so the tool can show how eligible-parcel counts and estimated capacity move as requirements change — which is the actual policy question ("what if the minimum lot size were lower/higher") rather than a single verdict.
+
+Implemented now, Kauai-verified:
+- **`min_lot_sqft`** (default 7,500, unconfirmed placeholder) — swept 5,000→15,000 sqft: eligible parcels range from 15,395 down to 3,020, a >5x spread. This is the parameter the real ADU-ordinance research (still an open item) should ultimately replace with Kauai's actual minimum, but the mechanism for varying it is now in place regardless of what that number turns out to be.
+- **`require_owner_occupancy`** — Kauai's own tax-class field already distinguishes `OWNER-OCCUPIED` from `NON-OWNER-OCCUPIED RESIDENTIAL`, so this toggle works today with no new data: turning it on roughly halves eligible parcels (11,351 → 5,960 at the default lot size). Only Kauai has this distinction in its taxclass scheme right now (see data/DATA_SOURCES.md) — the other three counties' fields don't support it yet, and the code says so explicitly (`owner_occupancy_warning` in the returned metadata) rather than silently no-op'ing.
+- **`absorption_rate`** — defaults to the county's own sourced benchmark above; overridable.
+- **`require_parking`** — present as a toggle, but **not functionally implemented**: no county parking-ratio ordinance data has been sourced yet (same open item as the Parking Requirement Reduction scenario mapping above). Turning it on is recorded in the metadata with an explicit warning that it currently changes nothing, rather than pretending to apply an unsourced number.
+
+The expensive spatial-join/bucketing step (`build_county()`) runs once per county; `run_adu_scenario()` re-applies these parameters cheaply against the already-bucketed table — the split a real slider UI would need, so flipping a toggle doesn't mean re-running the GIS joins.
+
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 
 ## Building footprints — buildable-area / reform-capacity modeling, AUTOMATED 2026-10-14
@@ -105,7 +135,7 @@ Several scenarios (Missing Middle, Parking Requirement Reduction, and really any
 
 | Assumption | Value / choice | Rationale | Source |
 | ---------- | -------------- | --------- | ------ |
-| Share of eligible parcels that redevelop (absorption rate) | TBD — `housingstrategy`'s El Paso build grounded this in local permit-pace data (FRED BPPRIV series); Hawaii's county-level equivalent needs to be pulled before defaulting a number | Should not reuse El Paso's 8% as-is; different market | Census Building Permits Survey, by HI county |
+| Share of eligible parcels that redevelop (absorption rate) | **Statewide default 6.7%, island-specific benchmarks range 5.0%–11.0%** — see table below. Exposed as a slider in `build_model.py` (`ScenarioParams.absorption_rate`), defaulting per-county to its own benchmark rather than one number everywhere. | Not the same quantity El Paso's 8% approximated (no historical eligible-*parcel* baseline exists for Hawaii either) — this is the best available empirical proxy: each area's average annual permit count as a share of its housing stock, scaled to a 10-year horizon | FRED Building Permits Survey (`BPPRIV015001/3/7/9`, `HIBPPRIV`) × Hawaii DBEDT 2023 housing-unit estimates (`CO-EST2023-HU-15`) — full figures in `data/reference/absorption_rate_benchmarks.csv` |
 | Unit size / job size planning benchmarks (sq ft per unit, per job) | TBD | Carried over as a *pattern* from the El Paso build, not as literal values | Planning literature, adjustable in UI |
 | Parking land consumption per space | TBD | Needed for Missing Middle / Parking Reduction formulas | Local parking-standard literature |
 
