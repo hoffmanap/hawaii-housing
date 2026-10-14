@@ -1,0 +1,14 @@
+# Optional Makefile implementing the setup / run / test command contract.
+# Copy to the repository root as `Makefile` and replace the placeholder
+# commands with your own. Works with any language.
+
+.PHONY: setup run test
+
+setup:
+	@echo "Replace with your setup command, e.g. pip install -r requirements.txt"
+
+run:
+	@echo "Replace with your run command, e.g. python app.py"
+
+test:
+	@echo "Replace with your test command, e.g. pytest" && false

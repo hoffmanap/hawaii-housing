@@ -1,0 +1,73 @@
+# Continuous integration: runs your automated tests on every push and pull
+# request. A green check here is evidence for the "automated tests" and
+# "reproducible setup" eligibility gates.
+#
+# This template is language-agnostic. By default it runs the OPTIONAL script
+# trio (scripts/setup.sh and scripts/test.sh) if you use it — see
+# examples/command-contract/. If you prefer native tooling, comment out the
+# "Script-based" job and uncomment the job for your language.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  # --- Script-based (language-agnostic, default) ------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up
+        run: |
+          if [ -f scripts/setup.sh ]; then
+            bash scripts/setup.sh
+          else
+            echo "No scripts/setup.sh found. Add your setup command here or"
+            echo "switch to the language-specific job below."
+          fi
+
+      - name: Test
+        run: |
+          if [ -f scripts/test.sh ]; then
+            bash scripts/test.sh
+          else
+            echo "::error::No scripts/test.sh found. Define your test command"
+            echo "here (or uncomment the job for your language) so CI runs your tests."
+            exit 1
+          fi
+
+  # --- Python -----------------------------------------------------------------
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v7
+  #     - uses: actions/setup-python@v7
+  #       with:
+  #         python-version: "3.14"
+  #     - run: uv sync
+  #     - run: pytest
+
+  # --- JavaScript / TypeScript ------------------------------------------------
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v7
+  #     - uses: actions/setup-node@v7
+  #       with:
+  #         node-version: "24"
+  #     - run: npm ci
+  #     - run: npm test
+
+  # --- Go ---------------------------------------------------------------------
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v7
+  #     - uses: actions/setup-go@v7
+  #       with:
+  #         go-version: "1.25"
+  #     - run: go test ./...

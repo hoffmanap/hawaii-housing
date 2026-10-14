@@ -1,0 +1,60 @@
+# ==============================================================================
+# Starter .gitignore — language-neutral defaults
+#
+# This list covers the things NO submission should ever commit: secrets,
+# credentials, local environment files, and large or raw data. Add the
+# ignore rules for your own language/toolchain below the marked section.
+#
+# GitHub maintains ready-made .gitignore files for most languages at
+# https://github.com/github/gitignore — copy the one(s) you need into the
+# "Language-specific" section.
+# ==============================================================================
+
+# --- Secrets and credentials (NEVER commit these) -----------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+secrets.*
+*.secret
+
+# --- Local environment / OS ---------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.log
+
+# --- Data (do not commit raw or large data; document how to fetch it) ---------
+# Keep small sample data in data/sample/ and ignore everything else in data/.
+data/*
+!data/sample/
+!data/README.md
+*.csv
+*.parquet
+*.xlsx
+*.sqlite
+*.db
+
+# --- Build / output artifacts -------------------------------------------------
+dist/
+build/
+out/
+*.bom
+sbom.json
+sbom.spdx.json
+
+# ==============================================================================
+# Language-specific — paste rules for your stack here
+# (Python, Node, Go, R, Rust, etc.)
+# ==============================================================================
+
+__pycache__/
+*.pyc
+.pytest_cache/

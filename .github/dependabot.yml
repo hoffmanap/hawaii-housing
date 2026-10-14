@@ -1,0 +1,41 @@
+# Dependabot keeps your dependencies patched and flags known vulnerabilities.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+#
+# The "github-actions" block below works for every team, because every repo that
+# uses the CI workflow has GitHub Actions dependencies. UNCOMMENT the block that
+# matches your language so Dependabot also watches your project dependencies.
+
+version: 2
+updates:
+  # Keeps the versions of actions used in .github/workflows up to date.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # --- Python -----------------------------------------------------------------
+  # - package-ecosystem: "uv"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+
+  # --- JavaScript / TypeScript ------------------------------------------------
+  # - package-ecosystem: "npm"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+
+  # --- Go ---------------------------------------------------------------------
+  # - package-ecosystem: "gomod"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+
+  # --- Rust -------------------------------------------------------------------
+  # - package-ecosystem: "cargo"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+
+  # Other ecosystems (maven, bundler, composer, nuget, etc.) are listed at
+  # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#package-ecosystem
