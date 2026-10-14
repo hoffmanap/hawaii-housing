@@ -54,7 +54,22 @@ Rather than continuing to chase inconsistent, partially-undecoded per-county ass
 - **Why it's a good fit here:** it already reports at census-tract level — the Challenge's target aggregation — so there's no parcel-to-tract rollup to get wrong, and it applies *uniformly* across all four counties, unlike every assessor field we've chased so far.
 - **The real caveat:** an "active residential address" is a USPS delivery point, not a certified housing unit count — a duplex with one mailbox undercounts, a commercial address occasionally miscodes as residential. It's a strong proxy for current stock, not a legal record of it.
 - **Role in the model:** HUD tract counts become the **current-housing-stock denominator** feeding the Baseline scenario, and the cross-check for Oahu's LEGDAT-derived counts (LEGDAT stays in as a parcel-level validation/drill-down layer for Oahu specifically, where it already exists, but is no longer a dependency for the statewide number).
-- **Access note:** the HUD USPS portal requires a login/registration that the person obtained access to be able to pull manually (requires requesting access distinct from the public ArcGIS pulls we've automated elsewhere) — `fetch_data.py` will add an `--layer hud_usps_tract` target once the raw extract is in hand; this one isn't scriptable end-to-end the way the ArcGIS layers are.
+- **Access note:** the HUD USPS portal requires a login/registration, so this is a manual pull, not scriptable end-to-end like the ArcGIS layers. **In hand as of 2026-10-14** (`usps_vac_062026_tractsum_2kx.zip`, June 2026 vintage, 2020 census tract geography) — filtered to Hawaii (`geoid` starting `15`) and saved to `data/raw/hud_usps_tract_hi.csv`, 432 tracts. Sanity check: statewide active residential addresses (`ams_res`) sum to 631,002, in the right range for Hawaii's housing stock.
+
+## Buildable-area methodology: parcel-level computation, bucketed rollup
+
+Reform-capacity scenarios (Missing Middle, Parking Requirement Reduction, and any density-increase scenario) need *remaining* buildable area per parcel, not just current footprint. The chosen approach computes this at the parcel level and rolls up into **buckets**, not a single averaged ratio, because:
+
+- **An averaged coverage ratio would misrepresent capacity.** Reform capacity is concentrated in a minority of underbuilt/vacant parcels; a tract average blends them with already-built-out parcels and erases exactly the signal a scenario needs to act on.
+- **Bucketing matches the data's real precision.** Building footprints are ML-derived (see below) and noisy at parcel edges — a coverage ratio of 23% vs. 31% is noise-sensitive, but which band it falls in generally isn't.
+
+**Pipeline:**
+1. **Parcel level (per county):** spatial join of TMK parcels to building footprints; compute `coverage_ratio = Σ footprint_area / parcel_area` and `remaining_area = parcel_area − Σ footprint_area` per TMK.
+2. **Bucket each parcel** on lot-size band (e.g. <5k / 5–10k / 10–20k / 20k+ sq ft), coverage band (e.g. 0–10% / 10–25% / 25–50% / 50–75% / 75%+), **and** zoning district + State Land Use District — the latter two aren't optional extra dimensions, they're what eligibility is keyed on anyway, so the bucket table is grouped by them from the start.
+3. **Roll up** to `(tract or county) × zoning district × lot-size band × coverage band → parcel_count, Σ remaining_area`. This bucketed table — not raw parcel geometry — is what every scenario formula reads from: auditable, reproducible, and already at the Challenge's required aggregation level.
+4. Scenario eligibility logic reads as, e.g., "Urban district, single-family zoning, lot-size ≥10k, coverage <25% → ADU-eligible" against the bucket table.
+
+**Still open:** exact bucket boundaries (lot-size and coverage bands above are placeholders) and whether `remaining_area` needs a per-zoning-district coverage-ratio/setback adjustment rather than the flat `parcel − footprint` figure (same ordinance-text research flagged elsewhere in this document).
 
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 

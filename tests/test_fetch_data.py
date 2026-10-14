@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 import fetch_data  # noqa: E402
+import parse_hud_usps  # noqa: E402
 
 
 def test_layer_map_covers_all_four_counties():
@@ -37,6 +38,15 @@ def test_building_footprints_bbox_covers_all_main_islands():
     assert b["xmin"] < -159.5  # west of Niihau
     assert b["xmax"] > -154.9  # east of the Big Island
     assert b["ymin"] < 20.0 and b["ymax"] > 22.0
+
+
+def test_hud_usps_hawaii_fips_prefix_is_15():
+    """
+    Regression guard: Hawaii's 2020-census state FIPS code is 15. If this
+    ever got fat-fingered to another state's prefix, parse_hud_usps.py
+    would silently produce an empty or wrong-state CSV.
+    """
+    assert parse_hud_usps.HI_STATE_FIPS_PREFIX == "15"
 
 
 def test_existing_units_via_legdat_row_count():

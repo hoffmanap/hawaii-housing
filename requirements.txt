@@ -3,3 +3,4 @@ geopandas>=0.14
 requests>=2.31
 pytest>=8.0
 duckdb>=1.1
+dbfread>=2.0
