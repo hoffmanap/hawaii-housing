@@ -45,6 +45,20 @@ HONOLULU_BFS_BASE_URL = (
 )
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
+# Google/Microsoft Open Buildings (VIDA/Source Cooperative), combined, public,
+# GeoParquet, partitioned by country. There is no Hawaii-only or state-level
+# file -- the USA partition covers the whole country -- so this is queried
+# with a bounding-box filter via DuckDB's spatial+httpfs extensions, which
+# prunes GeoParquet row groups by their bbox statistics rather than
+# downloading the full nationwide file. See data/DATA_SOURCES.md.
+BUILDING_FOOTPRINTS_URL = (
+    "https://data.source.coop/vida/google-microsoft-open-buildings/"
+    "geoparquet/by_country/country_iso=USA/USA.parquet"
+)
+# Generous statewide bounding box covering all main Hawaiian islands
+# (Niihau in the west to the Big Island in the east).
+HAWAII_BBOX = {"xmin": -160.6, "ymin": 18.7, "xmax": -154.6, "ymax": 22.5}
+
 # name: (base_url, layer_id, max records per page). Page sizes are each
 # service's own confirmed maxRecordCount, checked via layer metadata query.
 LAYERS = {
@@ -137,22 +151,63 @@ def fetch_layer(
     return len(records)
 
 
+def fetch_building_footprints(out_path: Path) -> int:
+    """
+    Pull Hawaii building footprints from the combined Google/Microsoft Open
+    Buildings GeoParquet dataset, filtered to a statewide bounding box, and
+    write GeoJSON. Used as the buildable-area input (parcel area minus
+    existing footprint) for density-increase scenarios -- see
+    docs/MODEL_AND_ASSUMPTIONS.md. Requires the `duckdb` package (spatial +
+    httpfs extensions, auto-installed on first run).
+    """
+    import duckdb
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    con.execute("INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs;")
+    b = HAWAII_BBOX
+    query = f"""
+        SELECT
+            bf_source, confidence, area_in_meters, s2_id, geohash,
+            ST_AsGeoJSON(geometry) AS geometry_json
+        FROM read_parquet('{BUILDING_FOOTPRINTS_URL}')
+        WHERE bbox.xmin BETWEEN {b['xmin']} AND {b['xmax']}
+          AND bbox.ymin BETWEEN {b['ymin']} AND {b['ymax']}
+    """
+    rows = con.execute(query).fetchall()
+    cols = [d[0] for d in con.description]
+    features = []
+    for row in rows:
+        rec = dict(zip(cols, row))
+        geom = json.loads(rec.pop("geometry_json"))
+        features.append({"type": "Feature", "geometry": geom, "properties": rec})
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return len(features)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--layer",
-        choices=list(LAYERS) + ["all"],
+        choices=list(LAYERS) + ["building_footprints", "all"],
         default="all",
         help="Which named layer to fetch (default: all)",
     )
     args = parser.parse_args()
 
-    targets = LAYERS if args.layer == "all" else {args.layer: LAYERS[args.layer]}
-    for name, (base_url, layer_id, page_size) in targets.items():
-        out_path = RAW_DIR / f"{name}.json"
-        print(f"Fetching {name} (layer {layer_id})...")
-        count = fetch_layer(base_url, layer_id, page_size, out_path)
+    if args.layer in ("building_footprints", "all"):
+        out_path = RAW_DIR / "building_footprints.json"
+        print("Fetching building_footprints (Google/Microsoft Open Buildings, HI bbox)...")
+        count = fetch_building_footprints(out_path)
         print(f"  {count} records -> {out_path}")
+
+    if args.layer != "building_footprints":
+        targets = LAYERS if args.layer == "all" else {args.layer: LAYERS[args.layer]}
+        for name, (base_url, layer_id, page_size) in targets.items():
+            out_path = RAW_DIR / f"{name}.json"
+            print(f"Fetching {name} (layer {layer_id})...")
+            count = fetch_layer(base_url, layer_id, page_size, out_path)
+            print(f"  {count} records -> {out_path}")
 
 
 if __name__ == "__main__":

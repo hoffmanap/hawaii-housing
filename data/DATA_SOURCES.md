@@ -49,11 +49,15 @@ Live-data check against the full `ASMTPITT` table (327,161 rows) found this tabl
 - **Caveat:** an "active residential address" is a USPS delivery point, not a legally certified unit count (undercounts multi-unit buildings sharing one mailbox; occasional residential/commercial miscoding).
 - **Access:** requires a registered HUD USER account/login — not pullable by the anonymous ArcGIS-style scripts in `fetch_data.py`. The user will pull this extract manually; once in hand it drops into `data/raw/hud_usps_tract.csv` and `fetch_data.py` gets a corresponding `--layer hud_usps_tract` entry documenting the manual-fetch step (script will validate/normalize, not download).
 
-## Building footprints: buildable-area / reform-capacity (added 2026-10-14)
+## Building footprints: buildable-area / reform-capacity — AUTOMATED, 2026-10-14
 
-- **Microsoft Global ML Building Footprints** — nationwide, open (ODbL), ML-derived building outlines, state-level GeoJSON extracts including Hawaii. Statewide and uniform across all four counties; default source for buildable-area calculations.
-- **County-published footprints (supplement/validation)** — confirmed live: Maui County `BuildingFootprints2023_gdb` Feature Service (`services3.arcgis.com/fsrDo0QMPlK9CkZD/ArcGIS/rest/services/BuildingFootprints2023_gdb/FeatureServer`), produced for planning/wildfire-recovery use. Still need to check whether Honolulu, Hawaii County, and Kauai publish equivalents, particularly for Oahu's dense condo parcels where ML footprints may merge/split buildings inaccurately.
+**Primary source, now scripted:** the combined Google/Microsoft Open Buildings dataset (via VIDA / Source Cooperative), public GeoParquet, no login. There's no Hawaii-specific or state-level file — it's partitioned by country, so `fetch_data.py`'s `fetch_building_footprints()` queries the USA partition with a statewide bounding-box filter via DuckDB's spatial + httpfs extensions, which prunes GeoParquet row groups by their bbox statistics instead of downloading the whole country file. Run with `python scripts/fetch_data.py --layer building_footprints`.
+
+- **Verified live, 2026-10-14:** 252,050 building footprints returned for the Hawaii bounding box (`xmin -160.6, ymin 18.7, xmax -154.6, ymax 22.5` — Niihau through the Big Island), written to `data/raw/building_footprints.json` as a GeoJSON FeatureCollection. Each feature carries `bf_source` (google/microsoft), `confidence`, `area_in_meters`, plus `s2_id`/`geohash` for spatial joins.
+- **Caveats:** ML-derived outlines — occasional merged/split buildings, especially plausible on Oahu's dense condo parcels; `confidence` is frequently null for Microsoft-sourced footprints (only Google-sourced ones reliably carry a score); no attribute data beyond geometry, area, and source.
+- **Supplement/validation candidate:** a Maui County-specific `BuildingFootprints2023_gdb` Feature Service is live (`services3.arcgis.com/fsrDo0QMPlK9CkZD/ArcGIS/rest/services/BuildingFootprints2023_gdb/FeatureServer`), produced for planning/wildfire-recovery use. Not yet checked whether Honolulu, Hawaii County, or Kauai publish equivalents.
 - **Open modeling question:** whether buildable area = parcel area − footprint area directly, or needs a per-zoning-district coverage-ratio/setback adjustment (see docs/MODEL_AND_ASSUMPTIONS.md).
+- **License:** Microsoft's footprints are ODbL; confirm Google's V3 Open Buildings license terms (and the combined dataset's effective license) before this goes in DATA_PROVENANCE.md's formal citation table.
 
 ## Supplementary national datasets (for baseline / economic context)
 

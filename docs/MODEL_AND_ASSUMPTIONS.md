@@ -58,12 +58,13 @@ Rather than continuing to chase inconsistent, partially-undecoded per-county ass
 
 **What HUD data does *not* solve:** it tells us how many units exist, not what's legally buildable. Reform-capacity eligibility (is this tract currently zoned single-family-only, inside the Urban State Land Use District, etc.) still comes from the zoning/land-use spatial layers above — HUD is an additional, parallel input, not a replacement for the zoning overlay.
 
-## Building footprints — added for buildable-area / reform-capacity modeling (2026-10-14)
+## Building footprints — buildable-area / reform-capacity modeling, AUTOMATED 2026-10-14
 
-Several scenarios (Missing Middle, Parking Requirement Reduction, and really any density-increase scenario) need to know how much of a parcel is *already* built on, to estimate remaining buildable area rather than assuming the whole lot is available. Two candidate sources, likely used together:
+Several scenarios (Missing Middle, Parking Requirement Reduction, and really any density-increase scenario) need to know how much of a parcel is *already* built on, to estimate remaining buildable area rather than assuming the whole lot is available.
 
-- **Microsoft Global ML Building Footprints** — nationwide, open (ODbL), machine-learning-derived building outlines including Hawaii, available as state-level GeoJSON extracts. Statewide, uniform across all four counties — the natural default for the aggregate model, with the usual ML-footprint caveats (occasional merged/split buildings, no attribute data beyond the outline itself, snapshot date varies by capture).
-- **County-published footprints as validation/supplement** — confirmed a Maui County-specific `BuildingFootprints2023_gdb` Feature Service (`services3.arcgis.com/fsrDo0QMPlK9CkZD`), produced for planning/wildfire-recovery use; worth checking whether Honolulu, Hawaii County, and Kauai each publish an equivalent before assuming Microsoft's layer alone is sufficient for Oahu's unusually dense condo parcels.
+**Primary source, now scripted end-to-end:** the combined Google/Microsoft Open Buildings dataset, pulled by `fetch_data.py --layer building_footprints` via a DuckDB spatial/httpfs bounding-box query against the public USA GeoParquet partition (no login, no manual step — unlike HUD above). Verified live: 252,050 footprints returned for Hawaii's statewide bounding box. Statewide and uniform across all four counties — the default for the aggregate model, with the usual ML-footprint caveats (occasional merged/split buildings, `confidence` null for most Microsoft-sourced polygons, no attributes beyond geometry/area/source).
+
+**Supplement/validation candidate:** a confirmed-live Maui County `BuildingFootprints2023_gdb` Feature Service, produced for planning/wildfire-recovery use — worth checking whether Honolulu, Hawaii County, and Kauai publish equivalents before assuming the statewide ML layer alone is sufficient for Oahu's unusually dense condo parcels.
 
 **Open question, not yet resolved:** whether "buildable area" should be computed as `parcel area − footprint area` directly, or needs a setback/coverage-ratio adjustment per zoning district (a lot that's 40% built may still be at its legal buildable maximum under that district's coverage limit) — this needs the same ordinance-text research already flagged above for parking ratios and ADU lot-size minimums, not just the GIS geometry.
 

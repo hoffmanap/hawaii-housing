@@ -28,6 +28,17 @@ def test_every_layer_has_a_base_url_and_id():
         assert page_size > 0
 
 
+def test_building_footprints_bbox_covers_all_main_islands():
+    """
+    Niihau (west) through the Big Island (east); regression guard against
+    accidentally narrowing the box to Oahu only.
+    """
+    b = fetch_data.HAWAII_BBOX
+    assert b["xmin"] < -159.5  # west of Niihau
+    assert b["xmax"] > -154.9  # east of the Big Island
+    assert b["ymin"] < 20.0 and b["ymax"] > 22.0
+
+
 def test_existing_units_via_legdat_row_count():
     """
     Regression test for the core discovery that makes Oahu eligibility
