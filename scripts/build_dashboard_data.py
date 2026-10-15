@@ -63,6 +63,41 @@ def main() -> None:
     acs = pd.read_csv(RAW_DIR / "acs_commute_density_kauai.csv")
     acs["GEOID"] = acs["GEOID"].astype(str)
 
+    # Existing-conditions baseline data (added 2026-10-15, user request):
+    # real income distribution, real sales comps, and the ACS median-rent
+    # figure, all already gathered for the scenario math above but never
+    # surfaced on their own as "what Kauai actually looks like today" --
+    # separate from any policy scenario. Feeds index.html's own
+    # "Existing Conditions" tab and docs/EXISTING_CONDITIONS.md.
+    income_path = RAW_DIR / "acs_income_distribution_kauai.csv"
+    income_by_geoid = {}
+    if income_path.exists():
+        income_df = pd.read_csv(income_path, dtype={"GEOID": str})
+        income_by_geoid = {r["GEOID"]: r for r in income_df.to_dict("records")}
+
+    sales_path = Path(__file__).parent.parent / "data" / "processed" / "kauai_sales_2026_joined.csv"
+    sales_by_geoid = {}
+    countywide_sales_count = 0
+    countywide_median_price_per_sqft = None
+    if sales_path.exists():
+        sales_df = pd.read_csv(sales_path, dtype={"GEOID": str})
+        cfg = bm.COUNTY_CONFIG["kauai"]
+        usable = sales_df[
+            (sales_df["building_sqft"] > 0)
+            & sales_df["price_per_sqft"].notna()
+            & sales_df["taxclass"].isin(cfg["existing_residential_taxclasses"])
+            & sales_df["GEOID"].notna()
+        ]
+        countywide_sales_count = int(len(usable))
+        countywide_median_price_per_sqft = (
+            round(usable["price_per_sqft"].median(), 2) if countywide_sales_count else None
+        )
+        by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
+        sales_by_geoid = {
+            geoid: {"median_price_per_sqft": round(row["median"], 2), "sales_count": int(row["count"])}
+            for geoid, row in by_tract.iterrows()
+        }
+
     tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
     tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts}
     adu_by_geoid = {r["GEOID"]: r for r in adu_gated.to_dict("records")}
@@ -89,6 +124,8 @@ def main() -> None:
         tod_r = tod_by_geoid.get(geoid, {})
         parking_r = parking_by_geoid.get(geoid, {})
         acs_r = acs_by_geoid.get(geoid, {})
+        income_r = income_by_geoid.get(geoid, {})
+        sales_r = sales_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "name": feat["properties"].get("NAME"),
@@ -128,7 +165,21 @@ def main() -> None:
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             # ACS context
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
+            "median_gross_rent_usd": acs_r.get("median_gross_rent_usd"),
             "pct_alt_mode_commute": acs_r.get("pct_alt_mode_commute"),
+            "population": acs_r.get("population"),
+            "density_per_sqmi": acs_r.get("density_per_sqmi"),
+            # Existing Conditions tab: real 2026 sales comps (Jan-Jun,
+            # min 5 sales/tract already applied upstream where used for
+            # feasibility -- here shown as-is, including thinner tracts,
+            # since this is descriptive baseline context, not a feasibility
+            # input) and the real ACS B19001 household-income distribution.
+            "sales_median_price_per_sqft": sales_r.get("median_price_per_sqft"),
+            "sales_count_2026": sales_r.get("sales_count"),
+            "total_households": income_r.get("total_households"),
+            "income_brackets": {
+                col: income_r.get(col) for col, _, _ in bm.ACS_B19001_BRACKETS_FOR_MODEL
+            } if income_r else None,
         }
         geometry = feat["geometry"]
         if shape is not None:
@@ -148,6 +199,17 @@ def main() -> None:
                     "affordability_mortgage_rate": bm.HAWAII_MORTGAGE_RATE_30YR_FIXED,
                     "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
                     "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
+                    "countywide_zori_usd_per_month": bm.KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH,
+                    "countywide_median_home_value_usd": bm.KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD,
+                    "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
+                    "countywide_sales_count_2026": countywide_sales_count,
+                    "existing_conditions_note": (
+                        "Baseline context, not a policy scenario: real 2026 county sales comps "
+                        "(Jan-Jun, user-supplied monthly exports), Zillow's county-level rent index "
+                        "(ZORI, zip-level coverage is zero for Kauai -- the rental market is too "
+                        "thin), ACS 2022 5-year median home value/rent and household-income "
+                        "brackets (B19001). See docs/EXISTING_CONDITIONS.md."
+                    ),
                     "development_fee_default_usd": bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
                     "development_fee_slider_min_usd": bm.DEVELOPMENT_FEE_SLIDER_MIN_USD,
                     "development_fee_slider_max_usd": bm.DEVELOPMENT_FEE_SLIDER_MAX_USD,
