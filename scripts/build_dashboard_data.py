@@ -111,8 +111,8 @@ def main() -> None:
                 "features": features,
                 "metadata": {
                     "default_absorption_rate": default_absorption_rate,
-                    "tod_density_per_acre": bm.TOD_REFORM_DENSITY_UNITS_PER_ACRE,
-                    "tod_density_target_caveat": bm.TOD_DENSITY_TARGET_CAVEAT,
+                    "tod_density_multiplier": bm.TOD_DENSITY_MULTIPLIER,
+                    "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
                 },
             }
         )
