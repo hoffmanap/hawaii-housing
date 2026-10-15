@@ -87,7 +87,12 @@ def main() -> None:
             "mm_feasible": mm_r.get("feasible"),
             # Transit-Oriented Density
             "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
-            "tod_gross_capacity": tod_r.get("additional_gross_capacity"),
+            # Computed at the statute's base FAR (4.0); the dashboard's FAR
+            # slider scales this proportionally client-side rather than
+            # re-running the model per drag -- an approximation (it skips
+            # re-applying the existing-units floor-at-zero clip per parcel
+            # at other FAR values), noted in the UI.
+            "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
             "tod_feasible": tod_r.get("feasible"),
             # Parking Requirement Reduction: does NOT change eligibility or unit
             # count vs. ADU (see run_parking_reduction_scenario docstring) --
@@ -111,7 +116,7 @@ def main() -> None:
                 "features": features,
                 "metadata": {
                     "default_absorption_rate": default_absorption_rate,
-                    "tod_density_multiplier": bm.TOD_DENSITY_MULTIPLIER,
+                    "tod_far_default": bm.TOD_FAR_BASE,
                     "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
                 },
             }

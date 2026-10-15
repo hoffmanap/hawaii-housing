@@ -611,37 +611,57 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
 # half-mile figure used in the previous pass for exactly this reason.
 THREE_QUARTER_MILE_METERS = 1_207.008
 
-# REFORM DENSITY -- replaced the earlier flat 50 units/acre (Honolulu's
-# Iwilei-Kapalama rail-redevelopment-pilot Master Plan target, confirmed via
-# a second source to NOT be a statewide standard of any kind) with the
-# mechanism Honolulu's OWN real TOD Special District zoning code actually
-# uses: a MULTIPLIER on whatever density the underlying zoning district
-# already allows, not a flat absolute ceiling (Honolulu Revised Ordinances
-# section 21-9.100-8, "General requirements and development standards" --
-# base FAR/density x1.2 with a minor TOD special district permit, x2.0 with
-# a major special district permit or PD-T approval). This is a real,
-# citable Hawaii TOD zoning TECHNIQUE, not a number borrowed from one
-# pilot area, and it structurally fixes the magnitude problem the flat
-# figure produced: a parcel's TOD capacity now scales off its own existing
-# zoned density (Kauai's real, already-computed density_per_acre), so a
-# rural R-2 parcel and an R-20 parcel get proportionally different TOD
-# capacity instead of an identical, Oahu-urban-redevelopment-scale ceiling.
-# Uses the major-permit tier (2.0x) -- the Challenge benchmark's own
-# language ("higher building heights and/or increased floor area ratios")
-# describes a real density increase, not Honolulu's smaller by-right bump.
-# Only applies to R-numbered districts, which are the only ones with a
-# density_per_acre figure to multiply -- same scope limitation as the ADU
-# and Missing Middle scenarios' density rule (AG/O/CN/CG parcels have no
-# such figure and are excluded, not assumed to be zero).
-TOD_DENSITY_MULTIPLIER = 2.0
+# REFORM DENSITY -- superseded again, 2026-10-15, by an actual ENACTED
+# Hawaii statute the user supplied: HB1409 (2025), Act 159, HRS section
+# 206E-246(j), defining "transit-supportive density" as a floor area ratio
+# (FAR), not a units/acre figure or a multiplier on existing zoning:
+#   - Base: FAR >= 4.0 for all uses permitted in a county-designated TOD
+#     area or under underlying county zoning (whichever is higher).
+#   - Within 1/2 mile of a "locally preferred alternative" transit
+#     station: FAR >= 6.0.
+#   - Within 1/4 mile of such a station: the GREATER of 7.0, the max FAR
+#     under an adopted TOD special district, or the max FAR under an
+#     applicable TOD plan.
+# The companion bill, SB1614, carried the identical FAR tiers but died in
+# committee (carried over to 2026) -- HB1409 is the one that actually
+# became law, so its figures are what this project uses. Wording is
+# mode-agnostic ("mass transit project," "public transit systems," never
+# "rail"), consistent with this scenario's bus-corridor scope, though the
+# higher 6.0/7.0 tiers are gated on a "locally preferred alternative" --
+# a term the statute doesn't define, so whether a bus corridor can reach
+# those tiers is genuinely untested, not confirmed here either way.
+#
+# Per the user's explicit design decision (2026-10-15): rather than
+# computing per-parcel distance tiers automatically, FAR is exposed as a
+# single slider value a user sets directly -- defaulting to the statute's
+# BASE tier (4.0), since the 3/4-mile eligibility buffer corresponds to
+# the broader "county-designated TOD area," not the inner 1/2- or
+# 1/4-mile station tiers. A user who wants to model being closer to a
+# stop can raise the slider toward 6.0 or 7.0 themselves.
+#
+# FAR -> units: floor_area_sqft = parcel_area_sqft * FAR; units =
+# floor_area_sqft / TOD_UNIT_SIZE_GSF. Reuses the lowrise product's unit
+# size already sourced in KAUAI_LIHUE_PRO_FORMA_INPUTS (840 sqft, from the
+# Lihu'e OPSD pro forma) as the representative TOD-area unit size -- a
+# stated assumption, not a size specific to this FAR tier (no Hawaii
+# source found for a TOD-specific unit size).
+#
+# Unlike the ADU/Missing Middle density rule, the statute applies "for
+# all uses permitted ... under underlying county zoning" -- i.e. it does
+# NOT carve out non-R-numbered zones the way this project's density_per_
+# acre rule does, so AG/O/CN/CG parcels are no longer excluded from TOD
+# capacity (a real scope change from the previous multiplier version).
+TOD_FAR_BASE = 4.0
+TOD_FAR_HALF_MILE = 6.0
+TOD_FAR_QUARTER_MILE = 7.0
+TOD_UNIT_SIZE_GSF = 840  # Lihu'e lowrise product, KAUAI_LIHUE_PRO_FORMA_INPUTS
 TOD_DENSITY_SOURCE_NOTE = (
-    "2.0x the parcel's own existing zoned density -- Honolulu Revised Ordinances "
-    "section 21-9.100-8's major-TOD-special-district-permit FAR/density multiplier, applied "
-    "to Kauai's own R-district density_per_acre rule rather than a flat absolute figure "
-    "borrowed from Honolulu's Iwilei-Kapalama pilot (confirmed, 2026-10-15, to not be a "
-    "statewide density standard of any kind). Only applies where a density_per_acre figure "
-    "exists (R-numbered districts); AG/O/CN/CG parcels are excluded, same as elsewhere in "
-    "this project."
+    "FAR-based, per HB1409 (2025)/Act 159, HRS 206E-246(j) -- an ENACTED Hawaii statute's "
+    "'transit-supportive density' standard, not a borrowed figure or a multiplier on existing "
+    "zoning. Default FAR 4.0 is the statute's base TOD-area tier; the slider lets a user raise "
+    "it toward the statute's 6.0 (within 1/2 mile of a station) or 7.0 (within 1/4 mile) tiers "
+    "for a closer-to-station scenario. Units = parcel_area_sqft * FAR / 840 sqft (the Lihu'e "
+    "lowrise product's unit size -- a stated assumption, not a TOD-specific source)."
 )
 
 
@@ -709,39 +729,45 @@ def kauai_tod_eligible_parcels(
 
 
 def run_tod_scenario(
-    county: str = "kauai", density_multiplier: float = TOD_DENSITY_MULTIPLIER
+    county: str = "kauai", far: float = TOD_FAR_BASE, unit_size_gsf: float = TOD_UNIT_SIZE_GSF
 ) -> tuple[pd.DataFrame, dict]:
     """
     Transit-Oriented Density INTERVENTION: for parcels within the major-
     transit-stop + arterial-corridor buffer (kauai_tod_eligible_parcels()),
-    models the effect of raising allowable density to density_multiplier x
-    the parcel's OWN existing zoned density_per_acre -- i.e. the capacity
-    unlocked by MORE development rights near transit than current zoning
-    allows, which is what the Challenge benchmark actually asks for
+    models the effect of allowing a floor area ratio of `far` -- i.e. the
+    capacity unlocked by MORE development rights near transit than current
+    zoning allows, which is what the Challenge benchmark actually asks for
     ("model the effect of increasing allowable residential density near
-    major transit stops"). Per the same baseline/intervention principle
-    used everywhere else in this project: additional_estimated_units =
-    max(0, reform_capacity - existing_units_estimate), not reform_capacity
-    on its own, so this never reports a TOD-eligible parcel's full zoned
-    capacity as if it were the reform's incremental effect.
+    major transit stops ... through higher building heights and/or
+    increased floor area ratios"). Per the same baseline/intervention
+    principle used everywhere else in this project: additional_estimated_
+    units = max(0, reform_capacity - existing_units_estimate), not
+    reform_capacity on its own, so this never reports a TOD-eligible
+    parcel's full zoned capacity as if it were the reform's incremental
+    effect.
 
-    Density mechanism (see TOD_DENSITY_MULTIPLIER above): a MULTIPLIER on
-    each parcel's own current density_per_acre, not a flat absolute
-    ceiling -- this is how Honolulu's real TOD Special District ordinance
-    actually works (HRO 21-9.100-8), and it structurally avoids the earlier
-    flat-50-units/acre version's magnitude problem, since capacity now
-    scales with each parcel's own existing zoned intensity rather than
-    imposing one Oahu-urban-redevelopment-scale number everywhere. Only
-    applies to R-numbered districts (the only ones with a density_per_acre
-    figure); AG/O/CN/CG parcels get no TOD capacity here, same scope limit
-    as the ADU and Missing Middle scenarios.
+    Density mechanism (see TOD_FAR_BASE above): FAR, not a units/acre
+    figure or a multiplier on existing zoning -- per HB1409 (2025)/Act
+    159, HRS 206E-246(j)'s enacted "transit-supportive density" standard,
+    which the user supplied directly. `far` is meant to be exposed as a
+    UI slider (default 4.0, the statute's base TOD-area tier; its 6.0/7.0
+    half-mile/quarter-mile tiers are real, higher settings a user can
+    choose). Applies to EVERY TOD-eligible parcel regardless of its
+    current zoning district -- the statute's "for all uses permitted ...
+    under underlying county zoning" wording doesn't carve out non-R
+    zones the way this project's own density_per_acre rule does, so this
+    scenario (unlike ADU/Missing Middle) does NOT exclude AG/O/CN/CG
+    parcels from TOD capacity.
 
     Parking: the benchmark lets teams "assume that parking requirements
-    are reduced or eliminated" for this scenario -- not modeled as a
-    separate constraint here since no parking-ratio ordinance data has
-    been sourced yet (same gap noted in run_adu_scenario()'s
-    parking_warning); this scenario's capacity number already assumes
-    parking isn't the binding constraint, consistent with that allowance.
+    are reduced or eliminated" for this scenario, so no parking
+    constraint is applied to the capacity number here -- but see
+    kauai_parking_reform_context() / the Parking Requirement Reduction
+    scenario's documented finding on what removing parking actually
+    changes in practice (meaningful land-use effect mainly on parcels
+    large enough for multi-unit development, modest elsewhere): the same
+    realism caveat applies to a TOD parcel actually being built at `far`
+    without a parking minimum, not just the ADU scenario.
 
     Currently Kauai-only (the only county with a real transit GTFS feed
     identified so far -- see docs/DATA_SOURCES.md).
@@ -764,15 +790,13 @@ def run_tod_scenario(
     parcel_table = parcel_table.merge(eligibility, on=pid, how="left")
     parcel_table["tod_eligible"] = parcel_table["tod_eligible"].fillna(False)
 
-    has_density_rule = parcel_table["density_per_acre"].notna()
-    reform_density_per_acre = parcel_table["density_per_acre"] * density_multiplier
     reform_capacity = (
-        (parcel_table["parcel_area_sqft"] / 43_560) * reform_density_per_acre.fillna(0)
+        (parcel_table["parcel_area_sqft"] * far) / unit_size_gsf
     ).apply(math.floor)
     additional_capacity = (reform_capacity - parcel_table["existing_units_estimate"]).clip(lower=0)
-    additional_capacity = additional_capacity.where(parcel_table["tod_eligible"] & has_density_rule, 0)
+    additional_capacity = additional_capacity.where(parcel_table["tod_eligible"], 0)
 
-    eligible_mask = (parcel_table["tod_eligible"]) & has_density_rule & (additional_capacity > 0)
+    eligible_mask = (parcel_table["tod_eligible"]) & (additional_capacity > 0)
     eligible = parcel_table[eligible_mask].copy()
     eligible["additional_unit_capacity"] = additional_capacity[eligible_mask]
 
@@ -804,12 +828,14 @@ def run_tod_scenario(
         "buffers to be TOD-eligible; stop-proximity alone flagged ~40% of the county (every "
         "town with any bus service) and wasn't usable as a zoning standard -- see the "
         "corridor_definition requirement above, added 2026-10-14 for exactly this reason.",
-        "density_multiplier": density_multiplier,
+        "far": far,
+        "unit_size_gsf": unit_size_gsf,
         "density_mechanism_note": TOD_DENSITY_SOURCE_NOTE,
+        "parking_assumption": "Removed per the benchmark's own allowance for this scenario -- "
+        "but see run_parking_reduction_scenario()/kauai_parking_reform_context() for the "
+        "documented realism caveat on what removing parking actually changes in practice "
+        "(land-use effect concentrated on parcels large enough for multi-unit development).",
         "absorption_rate": absorption_rate,
-        "parking_assumption": "Reduced/eliminated per the benchmark's own allowance for this "
-        "scenario -- not separately modeled as a constraint (no parking-ratio ordinance data "
-        "sourced yet).",
         "total_tod_eligible_parcels": int(parcel_table["tod_eligible"].sum()),
         "total_near_major_stop_only": int(parcel_table["near_major_stop"].sum()),
         "total_near_arterial_corridor_only": int(parcel_table["near_arterial_corridor"].sum()),
