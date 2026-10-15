@@ -756,8 +756,17 @@ TOD_DENSITY_SOURCE_NOTE = (
 )
 
 
+# Same mapping as fetch_data.py's COUNTY_FIPS, duplicated rather than
+# imported to avoid a cross-module dependency for one small dict.
+COUNTY_FIPS = {"honolulu": "003", "hawaii": "001", "kauai": "007", "maui": "009"}
+COUNTY_RURAL_LABEL = {
+    "kauai": "Rural Kaua'i (unincorporated)",
+    "honolulu": "Rural O'ahu (unincorporated)",
+}
+
+
 def tract_to_place_crosswalk(
-    tracts_geojson: Path | None = None, places_geojson: Path | None = None
+    tracts_geojson: Path | None = None, places_geojson: Path | None = None, county: str = "kauai"
 ) -> pd.DataFrame:
     """
     Real Census tract -> place-name crosswalk, for the dashboard's tract/
@@ -787,8 +796,10 @@ def tract_to_place_crosswalk(
         )
     tracts = gpd.read_file(tracts_path)
     places = gpd.read_file(places_path)
-    tracts = tracts[tracts["GEOID"].astype(str).str.startswith("15007")].copy()  # Kauai only
+    county_fips_prefix = "15" + COUNTY_FIPS[county]
+    tracts = tracts[tracts["GEOID"].astype(str).str.startswith(county_fips_prefix)].copy()
     places["place_name"] = places["NAME"].str.replace(" CDP", "", regex=False)
+    rural_label = COUNTY_RURAL_LABEL.get(county, f"Rural {county.title()} (unincorporated)")
 
     rows = []
     for _, tract in tracts.iterrows():
@@ -803,7 +814,7 @@ def tract_to_place_crosswalk(
         rows.append(
             {
                 "GEOID": tract["GEOID"],
-                "place_name": best_name if best_frac >= 0.1 else "Rural Kaua'i (unincorporated)",
+                "place_name": best_name if best_frac >= 0.1 else rural_label,
                 "place_overlap_frac": round(best_frac, 2),
             }
         )
