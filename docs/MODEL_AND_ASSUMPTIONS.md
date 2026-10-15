@@ -318,6 +318,12 @@ The Development Fee Reduction scenario's pro forma (`kauai_development_fee_reduc
 
 **Mechanism:** the dashboard embeds each scenario's `excess_value_usd` at the $50,000 baseline fee (already computed by the feasibility gate) and recomputes `feasible = (excess_value_usd_at_fee50k + (50,000 - slider_fee)) >= 0` client-side when the toggle is on — no model re-run needed per drag, same pattern as the FAR slider. This correctly leaves the affordability-constrained gate's percentages untouched (fee changes feasibility, not the comps-implied price households are trying to afford) while recomputing the feasibility-adjusted and affordability-constrained totals that depend on it.
 
+## Dashboard restructured: landing page, Existing Conditions first, visual redesign (2026-10-15)
+
+Per the user's request: `index.html` now opens on a landing section (headline framing the tool's purpose, four hero stats on Hawaii's real statewide/Kauai housing shortfall from the 2024 Hawai'i Housing Planning Study — 64,490 units needed statewide 2023-2027, 4,914 in Kauai alone, a $17.46/hour statewide renter wage gap the largest in the U.S., and Kauai's 11.6% of housing stock lost to vacation/short-term rental use, the highest share of any county) before any chart or control. **Existing Conditions is now the default/first tab**, broken into four topical sections (Rents, Sales & Home Values, Household Income & the Affordability Gap, Commute & Density), each pairing a chart with a short analysis paragraph, rather than one combined stat-grid-plus-table panel. A county-selector row (Kaua'i active; Honolulu/Maui/Hawai'i County marked "data pending") is present now specifically so the layout doesn't need rework when those counties are built out — it's inert until there's real per-county data to switch to, not a stub pretending those counties already have figures.
+
+Visual theme changed to a "highlighter" aesthetic per the user's request: a warm paper background, hard black borders with offset (non-blurred) drop shadows in place of soft SaaS-style card shadows, Archivo/Archivo Black for both headline and body type, and a recurring highlighter-swipe treatment (`<mark>`) behind key numbers and phrases, color-coded per section (yellow for emphasis, coral for warnings/gaps, teal for positive/real-data callouts) rather than one uniform accent everywhere. This is a visual change only — no scenario math, data pipeline, or test changed.
+
 # Core Assumptions and Their Rationale
 
 | Assumption | Value / choice | Rationale | Source |
