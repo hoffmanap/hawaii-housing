@@ -1083,6 +1083,60 @@ def kauai_parking_reform_context(acs_commute_density_csv: Path | None = None) ->
     }
 
 
+def honolulu_parking_reform_context(acs_commute_density_csv: Path | None = None) -> dict:
+    """
+    Honolulu analog of kauai_parking_reform_context(), with a materially
+    different, more defensible conclusion: Sohoni & Lee (2025)'s own
+    study sample INCLUDES a real Honolulu, HI data point
+    (PARKING_STUDY_CITY_BENCHMARKS["Honolulu, HI"]: parking supply fell
+    from 88.6% to 75.0% of the former minimum after a TOD-district
+    reform) -- unlike Kauai, this isn't extrapolation past the study's
+    support, it's the study's own observed outcome for this exact state
+    (though a TOD-district reform specifically, not a blanket citywide
+    one -- see the caveat in the verdict below). Honolulu's real
+    population-weighted density (~12,633/sq mi) and non-car commute share
+    (~15.2%) also sit much closer to the study's denser cities than
+    Kauai's do, independently supporting that this city belongs in the
+    same range the paper studied rather than being a case apart from it.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_honolulu.csv")
+    if not path.exists():
+        return {
+            "available": False,
+            "reason": f"{path} not found -- run `fetch_data.py --layer acs_commute_density "
+            "--county honolulu` (requires a free Census API key) first.",
+        }
+    df = pd.read_csv(path)
+    total_commuters = df["commuters_excl_wfh"].sum()
+    total_pop = df["population"].sum()
+    countywide_alt_mode_pct = (df["pct_alt_mode_commute"] * df["commuters_excl_wfh"]).sum() / total_commuters
+    countywide_density = (df["density_per_sqmi"] * df["population"]).sum() / total_pop
+    honolulu_benchmark = PARKING_STUDY_CITY_BENCHMARKS["Honolulu, HI"]
+    pct_mpr_before, pct_mpr_after, _ = honolulu_benchmark
+    implied_reduction_pct = round(100 * (1 - pct_mpr_after / pct_mpr_before), 1)
+    return {
+        "available": True,
+        "countywide_alt_mode_commute_pct": round(countywide_alt_mode_pct, 1),
+        "countywide_density_per_sqmi": round(countywide_density, 1),
+        "study_city_benchmarks": PARKING_STUDY_CITY_BENCHMARKS,
+        "honolulu_study_datapoint": {
+            "pct_of_former_mpr_before": pct_mpr_before,
+            "pct_of_former_mpr_after": pct_mpr_after,
+            "implied_parking_supply_reduction_pct": implied_reduction_pct,
+            "context": honolulu_benchmark[2],
+        },
+        "verdict": f"Unlike Kauai, Honolulu is directly IN this study's sample, not an "
+        f"extrapolation past it: Sohoni & Lee's own Oahu TOD-district reform saw post-reform "
+        f"parking supply fall to {pct_mpr_after}% of the former minimum from {pct_mpr_before}% "
+        f"-- an observed ~{implied_reduction_pct}% reduction in parking supply. Honolulu's "
+        f"countywide density (~12,633/sq mi) and non-car commute share (~15.2%) also sit far "
+        f"closer to this study's denser cities than Kauai's do. CAVEAT: the study's own "
+        f"Honolulu data point was a TOD-DISTRICT reform specifically, not a blanket citywide "
+        f"change -- applying this ratio outside TOD-eligible areas is still an extrapolation, "
+        f"just a much smaller one than applying it to Kauai at all.",
+    }
+
+
 def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
     """
     Parking Requirement Reduction, built on the same ADU-eligible parcel
@@ -1119,6 +1173,24 @@ def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = 
     )
     if county == "kauai":
         metadata["post_reform_parking_supply_context"] = kauai_parking_reform_context()
+    elif county == "honolulu":
+        metadata["post_reform_parking_supply_context"] = honolulu_parking_reform_context()
+        # ROH 21-6.30(b)'s own waiver provisions (confirmed 2026-10-15):
+        # the +1 stall requirement this scenario's land-consumed figure
+        # assumes is waived outright within 0.5mi of a rail station, or
+        # within 800ft of a qualifying bus stop in the PUC/Ewa plan areas.
+        # No rail-station or bus-stop geometry has been fetched yet (see
+        # the ADU wiring commit's own notes), so this land-consumed
+        # figure is an upper bound -- it assumes the stall is required
+        # everywhere, which overstates the land actually at stake in
+        # whichever share of Honolulu's eligible parcels already qualify
+        # for a waiver under current code.
+        metadata["parking_waiver_not_yet_applied_note"] = (
+            "ROH 21-6.30(b) waives this requirement near rail stations and qualifying bus "
+            "stops (see data/reference/honolulu_adu_ordinance_verification.md) -- not yet "
+            "modeled here for lack of station/stop geometry, so parking_land_consumed_sqft "
+            "overstates the true land at stake for whichever parcels already qualify."
+        )
 
     out_path = OUT_DIR / f"{county}_parking_scenario_tract.csv"
     adu_tract.to_csv(out_path, index=False)
