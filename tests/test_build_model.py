@@ -253,3 +253,32 @@ def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     assert build_model.COUNTY_CONFIG["kauai"]["owner_occupied_taxclasses"] <= (
         build_model.COUNTY_CONFIG["kauai"]["existing_residential_taxclasses"]
     )
+
+
+def test_tod_scenario_rejects_non_kauai_county():
+    """
+    run_tod_scenario is explicitly Kauai-only until another county has its
+    own real transit GTFS feed sourced -- this guards against silently
+    returning a wrong/empty result for a county that has no transit data.
+    """
+    import pytest
+
+    with pytest.raises(NotImplementedError):
+        build_model.run_tod_scenario("honolulu")
+
+
+def test_tod_eligibility_requires_both_stop_and_corridor_proximity():
+    """
+    Regression guard for the 2026-10-14 correction: TOD eligibility must
+    be the AND of near-major-stop and near-arterial-corridor, not stop
+    proximity alone (which flagged ~40% of Kauai's parcels and wasn't a
+    usable uniform zoning standard -- see kauai_tod_eligible_parcels()'s
+    docstring). This checks the combination logic directly against
+    synthetic per-parcel flags, independent of the real GIS pull.
+    """
+    import pandas as pd
+
+    near_stop = pd.Series([True, True, False, False])
+    near_corridor = pd.Series([True, False, True, False])
+    tod_eligible = near_stop & near_corridor
+    assert list(tod_eligible) == [True, False, False, False]

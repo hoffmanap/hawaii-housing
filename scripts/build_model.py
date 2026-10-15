@@ -631,19 +631,42 @@ TOD_DENSITY_TARGET_CAVEAT = (
 )
 
 
-def kauai_tod_eligible_parcels(major_stops_csv: Path | None = None) -> pd.DataFrame:
+def kauai_tod_eligible_parcels(
+    major_stops_csv: Path | None = None, arterial_roads_geojson: Path | None = None
+) -> pd.DataFrame:
     """
-    Buffers Kauai Bus's major stops (2+ weekday routes; see
-    fetch_kauai_bus_major_stops()) by the half-mile threshold above, and
-    flags every Kauai parcel whose centroid falls inside the buffer.
-    Returns one row per parcel (parcel_id_field, tod_eligible), meant to be
-    merged onto the parcel_level.csv table the same way build_county()'s
-    other per-parcel flags are.
+    TOD eligibility is deliberately a two-part, uniformly-applied corridor
+    test, not a per-stop ranking -- per the user's 2026-10-14 correction:
+    a stop-proximity-only rule flagged ~40% of Kauai's parcels (every town
+    Kauai Bus's shuttle loops reach), which isn't a usable zoning standard
+    -- a zoning overlay has to be drawable as a uniform rule, and "near
+    SOME stop" doesn't concentrate density anywhere in particular.
+
+    A parcel is TOD-eligible only if its centroid falls within the
+    half-mile buffer of BOTH:
+    1. A major Kauai Bus stop (2+ weekday routes; fetch_kauai_bus_major_
+       stops()), and
+    2. A Principal- or Minor-Arterial road segment, per HDOT's own
+       federal functional classification (fetch_kauai_arterial_roads()) --
+       Kauai's two cross-island trunk highways (Kuhio Hwy, Kaumualii Hwy)
+       and their immediate approaches, not every residential street a bus
+       happens to loop through.
+
+    Both conditions use the same half-mile ("about a ten-minute walk")
+    standard as the State TOD Program's own station-area rule -- one
+    consistent threshold, not a different distance invented for each
+    factor. The result concentrates eligibility along the island's actual
+    transit corridors rather than blanketing every town with bus service.
     """
     stops_path = major_stops_csv or (RAW_DIR / "kauai_bus_major_stops.csv")
     if not stops_path.exists():
         raise RuntimeError(
             f"{stops_path} not found -- run `fetch_data.py --layer kauai_bus_major_stops` first."
+        )
+    roads_path = arterial_roads_geojson or (RAW_DIR / "kauai_arterial_roads.json")
+    if not roads_path.exists():
+        raise RuntimeError(
+            f"{roads_path} not found -- run `fetch_data.py --layer kauai_arterial_roads` first."
         )
     stops = pd.read_csv(stops_path)
     major = stops[stops["is_major_stop"].astype(str) == "True"]
@@ -661,8 +684,13 @@ def kauai_tod_eligible_parcels(major_stops_csv: Path | None = None) -> pd.DataFr
     ).to_crs(PROJECTED_CRS)
     station_area = stop_points.geometry.buffer(HALF_MILE_METERS).union_all()
 
-    centroids["tod_eligible"] = centroids.geometry.within(station_area)
-    return centroids[[pid, "tod_eligible"]]
+    arterials = _load_geojson(roads_path).to_crs(PROJECTED_CRS)
+    corridor_area = arterials.geometry.buffer(HALF_MILE_METERS).union_all()
+
+    centroids["near_major_stop"] = centroids.geometry.within(station_area)
+    centroids["near_arterial_corridor"] = centroids.geometry.within(corridor_area)
+    centroids["tod_eligible"] = centroids["near_major_stop"] & centroids["near_arterial_corridor"]
+    return centroids[[pid, "tod_eligible", "near_major_stop", "near_arterial_corridor"]]
 
 
 def run_tod_scenario(
@@ -738,8 +766,15 @@ def run_tod_scenario(
         "is_baseline": False,
         "major_transit_stop_definition": "Kauai Bus stop served by 2+ distinct weekday routes "
         "(58 of 126 weekday-served stops, per the GTFS feed fetched 2026-10-14).",
-        "proximity_threshold": "Half-mile radius -- the State of Hawaii TOD Program's own "
-        "station-area standard, extended here from rail to bus stops.",
+        "corridor_definition": "HDOT HPMS Roads federal functional classification: Principal "
+        "or Minor Arterial (Kuhio Hwy, Kaumualii Hwy, and their approaches) -- a uniform, "
+        "statewide-applied standard, not a threshold invented for this project.",
+        "proximity_threshold": "Half-mile radius ('about a ten-minute walk') -- the State of "
+        "Hawaii TOD Program's own station-area standard, applied identically to both the "
+        "major-stop buffer and the arterial-corridor buffer. A parcel must fall within BOTH "
+        "buffers to be TOD-eligible; stop-proximity alone flagged ~40% of the county (every "
+        "town with any bus service) and wasn't usable as a zoning standard -- see the "
+        "corridor_definition requirement above, added 2026-10-14 for exactly this reason.",
         "density_per_acre": density_per_acre,
         "density_target_caveat": TOD_DENSITY_TARGET_CAVEAT,
         "absorption_rate": absorption_rate,
@@ -747,6 +782,8 @@ def run_tod_scenario(
         "scenario -- not separately modeled as a constraint (no parking-ratio ordinance data "
         "sourced yet).",
         "total_tod_eligible_parcels": int(parcel_table["tod_eligible"].sum()),
+        "total_near_major_stop_only": int(parcel_table["near_major_stop"].sum()),
+        "total_near_arterial_corridor_only": int(parcel_table["near_arterial_corridor"].sum()),
     }
     return tract_rollup, metadata
 

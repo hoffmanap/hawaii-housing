@@ -192,6 +192,45 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
     return written
 
 
+HDOT_HPMS_ROADS_LAYER_URL = "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/12"
+ARTERIAL_F_SYSTEM_VALUES = ("Principal Arterial", "Minor Arterial")
+
+
+def fetch_kauai_arterial_roads(out_path: Path) -> int:
+    """
+    Kauai's Principal- and Minor-Arterial road segments (HDOT's Hawaii
+    Performance Monitoring System Roads layer -- FHWA federal functional
+    classification, geodata.hawaii.gov/.../Transportation/MapServer/12),
+    confirmed via the layer's own f_system_t field (no fudge factor: these
+    are the two tiers labeled "Principal Arterial" and "Minor Arterial" in
+    the service's own renderer/legend, applied uniformly statewide, not a
+    threshold this project invented).
+
+    Used for the Transit-Oriented Density scenario's corridor criterion:
+    per the user's 2026-10-14 correction, major-stop proximity alone was
+    too broad (half the county's bus stops sit on some road, which made
+    ~40% of Kauai's parcels "near transit") -- a parcel must ALSO be near
+    one of these arterial segments, so upzoning concentrates along the
+    corridors Kauai Bus's mainline routes actually run (Kuhio Hwy,
+    Kaumualii Hwy), not every shuttle-loop street.
+    """
+    params = {
+        "where": "island='Kauai' AND (" + " OR ".join(f"f_system_t='{v}'" for v in ARTERIAL_F_SYSTEM_VALUES) + ")",
+        "outFields": "route_name,f_system_t,island",
+        "f": "geojson",
+        "returnGeometry": "true",
+        "resultRecordCount": 2000,
+    }
+    url = f"{HDOT_HPMS_ROADS_LAYER_URL}/query?{urllib.parse.urlencode(params)}"
+    payload = _get_json_with_retries(url)
+    if "error" in payload:
+        raise RuntimeError(f"ArcGIS error fetching HDOT arterial roads: {payload['error']}")
+    features = payload.get("features", [])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return len(features)
+
+
 KAUAI_BUS_GTFS_URL = (
     "https://files.mobilitydatabase.org/ntd-90237/ntd-90237-202610120135/"
     "ntd-90237-202610120135.zip"
@@ -405,7 +444,10 @@ def main() -> None:
     parser.add_argument(
         "--layer",
         choices=list(LAYERS)
-        + ["building_footprints", "census_tracts", "acs_commute_density", "kauai_bus_major_stops", "all"],
+        + [
+            "building_footprints", "census_tracts", "acs_commute_density",
+            "kauai_bus_major_stops", "kauai_arterial_roads", "all",
+        ],
         default="all",
         help="Which named layer to fetch (default: all)",
     )
@@ -429,6 +471,13 @@ def main() -> None:
         print("Fetching kauai_bus_major_stops (Kauai Bus GTFS, MobilityDatabase)...")
         count = fetch_kauai_bus_major_stops(out_path)
         print(f"  {count} stops -> {out_path}")
+        return
+
+    if args.layer == "kauai_arterial_roads":
+        out_path = RAW_DIR / "kauai_arterial_roads.json"
+        print("Fetching kauai_arterial_roads (HDOT HPMS Roads, Principal/Minor Arterial)...")
+        count = fetch_kauai_arterial_roads(out_path)
+        print(f"  {count} segments -> {out_path}")
         return
 
     if args.layer in ("building_footprints", "all"):

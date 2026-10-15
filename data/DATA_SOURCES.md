@@ -77,6 +77,18 @@ Live-data check against the full `ASMTPITT` table (327,161 rows) found this tabl
 
 A companion OPSD deliverable (https://files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDTODInfra_2022/1.Deliverable1_20221102_HawaiiTODInfraFin.pdf, Nov. 2022) covers TOD infrastructure project costs (electrical, water/wastewater) and financing-capacity context for four pilot areas (Oahu, Maui, Kauai, Hawaii County) — reviewed, no station-specific density/FAR or parking figures found in the visible text; flagged as background context, not a direct model input.
 
+## Transit-Oriented Density: Kauai Bus GTFS + HDOT road classification (added 2026-10-14)
+
+**Kauai Bus GTFS feed** (MobilityDatabase, NTD ID 90237; `https://files.mobilitydatabase.org/ntd-90237/ntd-90237-202610120135/ntd-90237-202610120135.zip`; daily-refreshed, zero validation errors as of fetch). `fetch_data.py --layer kauai_bus_major_stops` downloads it, computes weekday trip counts and distinct-route counts per stop, and writes `data/raw/kauai_bus_major_stops.csv` with an `is_major_stop` flag (2+ distinct weekday routes — 58 of 126 weekday-served stops qualify).
+
+- **Role:** per the user's 2026-10-14 correction — the TOD scenario should not be scoped to Honolulu's rail stations ("there's nothing that says it has to be built around transit stations... base it around bus lines") — this is the real, bus-based transit data the scenario is built on instead, for the one county (Kauai) already fully built out in this model.
+- **Why "2+ routes":** Kauai Bus has no rail or BRT; its network is a hub-and-spoke of single-route shuttle loops feeding a handful of mainline/transfer stops. Route count is a clean, data-driven line between those two kinds of stop.
+
+**HDOT Hawaii Performance Monitoring System (HPMS) Roads** (`geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/12`) — FHWA federal functional classification (`f_system_t` field: Interstate, Freeway/Expressway, Principal Arterial, Minor Arterial, Major/Minor Collector, Local). `fetch_data.py --layer kauai_arterial_roads` pulls Kauai's Principal- and Minor-Arterial segments (88 segments: Kuhio Hwy, Kaumualii Hwy, and their approaches) to `data/raw/kauai_arterial_roads.json`.
+
+- **Role:** added after a first pass using major-stop proximity alone flagged ~40% of Kauai's parcels — every town with any bus service — which isn't a usable *uniform zoning standard* (per the user's follow-up: "This needs to be a zoning standard applied uniformly... transit stops plus some type of street designation, like high frequency transit along major corridors"). TOD eligibility (`build_model.kauai_tod_eligible_parcels()`) now requires a parcel to be within a half-mile of BOTH a major stop AND an arterial corridor — a real, statewide-applied federal classification, not a threshold invented for this project.
+- **Known limitation, not yet resolved:** because Kauai's towns sit directly along its two trunk highways, the arterial-corridor requirement only modestly narrowed eligibility (10,097 → 9,428 parcels at the half-mile threshold used for both factors; even an eighth-mile corridor buffer alone still covers ~5,600 parcels). The geography isn't the main driver of this scenario's still-implausible total — see the Transit-Oriented Density section of `docs/MODEL_AND_ASSUMPTIONS.md` for the real finding and the open question it leaves (the ~50 units/acre density target, borrowed from an Oahu rail-pilot Master Plan, is almost certainly the wrong scale to apply here).
+
 ## Supplementary national datasets (for baseline / economic context)
 
 - U.S. Census Bureau / ACS — demographic and housing stock context
