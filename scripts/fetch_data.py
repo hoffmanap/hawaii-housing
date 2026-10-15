@@ -108,6 +108,10 @@ COUNTY_FIPS = {"honolulu": "003", "hawaii": "001", "kauai": "007", "maui": "009"
 # (see docs/MODEL_AND_ASSUMPTIONS.md) mean by "alternative modes.")
 ACS_B08301_VARS = ["B08301_001E", "B08301_002E", "B08301_021E"]  # total, car/truck/van, worked from home
 ACS_B01003_VARS = ["B01003_001E"]  # total population
+ACS_HOUSING_VALUE_VARS = ["B25077_001E", "B25064_001E"]  # median home value, median gross rent
+# Census's sentinel for "estimate cannot be computed" (insufficient sample) --
+# appears literally as -666666666 in ACS detailed-table responses.
+ACS_NULL_SENTINEL = -666666666
 
 
 def fetch_acs_commute_density(county: str, out_path: Path) -> int:
@@ -132,7 +136,7 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
             "(gitignored) or the environment before running this layer."
         )
     county_fips = COUNTY_FIPS[county]
-    get_vars = ",".join(["NAME", *ACS_B08301_VARS, *ACS_B01003_VARS])
+    get_vars = ",".join(["NAME", *ACS_B08301_VARS, *ACS_B01003_VARS, *ACS_HOUSING_VALUE_VARS])
     url = (
         "https://api.census.gov/data/2022/acs/acs5"
         f"?get={get_vars}&for=tract:*&in=state:15+county:{county_fips}&key={key}"
@@ -157,7 +161,10 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(
-            ["GEOID", "name", "population", "commuters_excl_wfh", "pct_alt_mode_commute", "density_per_sqmi"]
+            [
+                "GEOID", "name", "population", "commuters_excl_wfh", "pct_alt_mode_commute",
+                "density_per_sqmi", "median_home_value_usd", "median_gross_rent_usd",
+            ]
         )
         for row in rows:
             record = dict(zip(cols, row))
@@ -173,7 +180,14 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
             pct_alt_mode = 100 * alt_mode / commuters
             aland_sqm = area_by_geoid.get(geoid)
             density = (population / (aland_sqm / sqm_per_sqmi)) if aland_sqm else None
-            writer.writerow([geoid, record["NAME"], population, commuters, round(pct_alt_mode, 2), density])
+            median_home_value = int(record["B25077_001E"])
+            median_gross_rent = int(record["B25064_001E"])
+            median_home_value = None if median_home_value == ACS_NULL_SENTINEL else median_home_value
+            median_gross_rent = None if median_gross_rent == ACS_NULL_SENTINEL else median_gross_rent
+            writer.writerow(
+                [geoid, record["NAME"], population, commuters, round(pct_alt_mode, 2), density,
+                 median_home_value, median_gross_rent]
+            )
             written += 1
     return written
 

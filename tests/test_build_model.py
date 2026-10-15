@@ -220,6 +220,29 @@ def test_kauai_pro_forma_fee_reduction_does_not_flip_affordable_feasibility():
     assert result["feasible"] is False
 
 
+def test_apply_feasibility_gate_zeros_out_infeasible_tracts():
+    """
+    The feasibility toggle must keep both numbers (raw zoning capacity and
+    the feasibility-gated number) rather than silently replacing one with
+    the other -- that's the whole point of a toggle, not a correction.
+    """
+    import pandas as pd
+
+    scenario = pd.DataFrame(
+        {"GEOID": ["15007000100", "15007000200", "15007000300"], "estimated_new_units": [10.0, 5.0, 8.0]}
+    )
+    feasibility = pd.DataFrame(
+        {
+            "GEOID": ["15007000100", "15007000200"],  # tract 300 missing -> treated as not feasible
+            "feasible": [True, False],
+            "excess_value_usd": [1000, -2000],
+        }
+    )
+    gated = build_model.apply_feasibility_gate(scenario, feasibility)
+    assert list(gated["feasibility_adjusted_units"]) == [10.0, 0.0, 0.0]
+    assert list(gated["estimated_new_units"]) == [10.0, 5.0, 8.0]  # raw column untouched
+
+
 def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     """
     Kauai's taxclass field is the only one so far with an owner-occupied

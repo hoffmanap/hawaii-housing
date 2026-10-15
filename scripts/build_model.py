@@ -847,6 +847,111 @@ def kauai_development_fee_reduction_feasibility(
     }
 
 
+# Kauai countywide median home value (ACS 2022 5-year, B25077), used ONLY as
+# the denominator to scale the Lihu'e Town Core pro forma's reference sale
+# price to each tract's own housing market -- see
+# tract_scaled_development_fee_reduction_feasibility() below. This is a
+# linear scaling heuristic, not a tract-specific appraisal: it assumes a
+# tract twice as expensive as the county median would sell new product at
+# roughly twice Lihu'e's reference price, holding the COST side of the pro
+# forma (hard cost, land cost, financing) fixed at the Lihu'e table's
+# figures, since no tract-level cost data exists. Verified live via Census
+# API, 2026-10-14.
+KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD = 742_900
+
+
+def tract_scaled_development_fee_reduction_feasibility(
+    acs_commute_density_csv: Path | None = None,
+    typology: str = "townhome_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+) -> pd.DataFrame:
+    """
+    Runs kauai_development_fee_reduction_feasibility() once per tract,
+    scaling the Lihu'e reference sale price by each tract's own ACS median
+    home value relative to the countywide median -- rather than applying
+    one submarket's feasibility verdict to the whole county. This is what
+    lets a scenario's tract-level unit estimate be gated by a feasible
+    column (the toggle the user asked for 2026-10-14), without claiming
+    tract-specific cost data this project doesn't have.
+
+    EXPLICIT LIMITATIONS (same honesty standard as the single-submarket
+    version this builds on):
+    - Scales REVENUE (sale price) by relative home value; cost inputs
+      (hard cost, land cost, financing) stay fixed at the Lihu'e table's
+      figures for every tract. A tract's land cost almost certainly
+      differs from Lihu'e's too, but no tract-level land-cost source is
+      in this project yet -- scaling only one side of the ledger is a
+      real asymmetry, stated here rather than hidden.
+    - Tracts with no reliable ACS home-value estimate (Census's
+      "cannot be computed" sentinel, already converted to null by
+      fetch_data.py) are left out, not filled with a guess.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_kauai.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `fetch_data.py --layer acs_commute_density --county kauai` first."
+        )
+    acs = pd.read_csv(path)
+    acs = acs.dropna(subset=["median_home_value_usd"]).copy()
+
+    base_inputs = KAUAI_LIHUE_PRO_FORMA_INPUTS[typology]
+    reference_sale_price = base_inputs["sale_price_per_unit_usd"][affordability]
+
+    rows = []
+    for _, tract in acs.iterrows():
+        scale = tract["median_home_value_usd"] / KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD
+        scaled_sale_price = reference_sale_price * scale
+        scaled_inputs = dict(KAUAI_LIHUE_PRO_FORMA_INPUTS[typology])
+        scaled_inputs["sale_price_per_unit_usd"] = {affordability: scaled_sale_price}
+        # Temporarily substitute the scaled inputs rather than duplicating
+        # the whole pro forma calculation here.
+        original = KAUAI_LIHUE_PRO_FORMA_INPUTS[typology]
+        KAUAI_LIHUE_PRO_FORMA_INPUTS[typology] = scaled_inputs
+        try:
+            result = kauai_development_fee_reduction_feasibility(typology, affordability, development_fee_usd)
+        finally:
+            KAUAI_LIHUE_PRO_FORMA_INPUTS[typology] = original
+        rows.append(
+            {
+                "GEOID": str(tract["GEOID"]),
+                "median_home_value_usd": tract["median_home_value_usd"],
+                "home_value_scale_vs_countywide": round(scale, 3),
+                "scaled_sale_price_usd": round(scaled_sale_price),
+                "excess_value_usd": result["excess_value_usd"],
+                "feasible": result["feasible"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def apply_feasibility_gate(
+    scenario_tract_df: pd.DataFrame,
+    feasibility_df: pd.DataFrame,
+    estimated_units_col: str = "estimated_new_units",
+) -> pd.DataFrame:
+    """
+    The toggle itself: joins a scenario's tract-level unit estimates
+    (ADU, Missing Middle, etc.) to tract_scaled_development_fee_reduction_
+    feasibility()'s per-tract verdict, and adds a
+    `feasibility_adjusted_units` column -- the same unit estimate where
+    `feasible` is True, zero where it isn't. Both columns stay in the
+    output so a consumer (or the dashboard) can show "zoning capacity"
+    and "feasibility-adjusted" side by side rather than only the gated
+    number.
+    """
+    scenario_tract_df = scenario_tract_df.copy()
+    scenario_tract_df["GEOID"] = scenario_tract_df["GEOID"].astype(str)
+    feasibility_df = feasibility_df.copy()
+    feasibility_df["GEOID"] = feasibility_df["GEOID"].astype(str)
+    merged = scenario_tract_df.merge(
+        feasibility_df[["GEOID", "feasible", "excess_value_usd"]], on="GEOID", how="left"
+    )
+    merged["feasible"] = merged["feasible"].fillna(False)
+    merged["feasibility_adjusted_units"] = merged[estimated_units_col].where(merged["feasible"], 0.0)
+    return merged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

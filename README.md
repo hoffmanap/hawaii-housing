@@ -16,7 +16,16 @@ Benchmark scenarios addressed: _[finalize once formulas are validated against Ha
 | Run   | `python scripts/fetch_data.py && python scripts/build_model.py` | Pulls source data from Hawaii's statewide GIS services and runs the scenario model, producing `data/output/*.json` consumed by `index.html` |
 | Test  | `pytest tests/` | Runs automated tests covering core eligibility and yield logic |
 
-No API keys or environment variables are required — all data sources are public/public-domain statewide services. `.env.example` is left in place for any addition (e.g., a geocoding key) but is not currently needed.
+Most data sources are public/public-domain statewide services needing no key. One exception: `fetch_data.py --layer acs_commute_density --county <county>` pulls Census ACS commute-mode, density, and median-home-value data (used by the Parking Requirement Reduction and Development Fee Reduction scenarios) and requires a free Census API key (https://api.census.gov/data/key_signup.html) set as `CENSUS_API_KEY` in `.env` (gitignored — copy `.env.example`).
+
+## Interactive tool
+
+`index.html` at the repo root is the Challenge's required interactive tool — a Kauai-pilot dashboard (Leaflet map + scenario/feasibility toggles) with its data embedded inline so it works standalone. It's a static snapshot generated from `build_model.py`'s live output, not a live pipeline: after any model change, regenerate it with:
+
+```
+python scripts/build_dashboard_data.py   # re-runs the model, writes data/sample/kauai_dashboard.geojson
+python scripts/embed_dashboard_data.py   # re-embeds that file into index.html
+```
 
 ## Data
 
