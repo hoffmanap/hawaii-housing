@@ -976,6 +976,36 @@ def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = 
 # assumption, not a researched Kauai-specific number.
 STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD = 50_000
 
+# Real Hawaii per-unit government fee components, Honolulu DPP's own
+# Affordable Housing Requirement Incentives handout (AHR_Incentives_
+# handout.pdf, honolulu.gov/tod, Feb. 2025) -- the fees that document says
+# are WAIVED for affordable units, i.e. the real dollar stack a market-rate
+# unit otherwise pays at permit issuance. Used only to bound the fee-
+# reduction slider's range to something the state actually charges, not to
+# replace the Challenge-mandated $50,000 standardized fee above.
+HAWAII_DEVELOPMENT_FEE_COMPONENTS_USD = {
+    "wastewater_system_facility_charge": (6_616, 6_616),
+    "water_system_facility_and_meter_charge": (4_200, 8_000),
+    "building_permit_and_plan_review": (2_200, 2_200),
+    "park_dedication_in_lieu_fee": (24_000, 57_000),
+}
+# Sum of the low ends (~$37,016) to the sum of the high ends (~$73,816),
+# rounded to a clean number -- the slider's reasonable ceiling. Note this
+# is a Honolulu-specific published breakdown; no equivalent Kauai-specific
+# fee schedule was found public, so this is used as the best available
+# statewide bound, not a Kauai-verified figure. The Challenge's own
+# $50,000 standardized default sits almost exactly mid-range of this real
+# stack -- a useful cross-check, not a coincidence engineered here.
+DEVELOPMENT_FEE_SLIDER_MAX_USD = 75_000
+DEVELOPMENT_FEE_SLIDER_MIN_USD = 0
+DEVELOPMENT_FEE_SOURCE_NOTE = (
+    "Honolulu DPP, Affordable Housing Requirement Incentives handout (honolulu.gov/tod, Feb. 2025) -- "
+    "real per-unit fees ($6,616 wastewater + $4,200-8,000 water + ~$2,200 building permit + "
+    "$24,000-57,000 park dedication-in-lieu, ~$37,000-74,000 combined) bound the slider's range "
+    "to what Hawaii actually charges, rather than leaving it open-ended. Honolulu-specific; no "
+    "published Kauai-specific breakdown was found, used here as the best available statewide bound."
+)
+
 
 def run_development_fee_reduction_scenario(
     scenario_tract_df: pd.DataFrame, estimated_units_col: str = "estimated_new_units"

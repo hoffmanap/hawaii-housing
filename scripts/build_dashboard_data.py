@@ -97,11 +97,19 @@ def main() -> None:
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
             "adu_feasible": adu_r.get("feasible"),
             "adu_pct_affording": adu_r.get("pct_households_affording"),
+            # Baseline excess_value_usd at the Challenge's $50,000 standardized
+            # fee -- the dashboard's development-fee slider recomputes
+            # feasible = (excess_value_usd_at_50k + (50000 - slider_fee)) >= 0
+            # client-side, since fee changes affect excess_value dollar-for-
+            # dollar (kauai_development_fee_reduction_feasibility()'s own
+            # documented mechanic) -- no need to re-run the model per drag.
+            "adu_excess_value_usd_at_fee50k": adu_r.get("excess_value_usd"),
             # Missing Middle
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_feasible": mm_r.get("feasible"),
             "mm_pct_affording": mm_r.get("pct_households_affording"),
+            "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             # Transit-Oriented Density
             "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
             # Computed at the statute's base FAR (4.0); the dashboard's FAR
@@ -112,6 +120,7 @@ def main() -> None:
             "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
             "tod_feasible": tod_r.get("feasible"),
             "tod_pct_affording": tod_r.get("pct_households_affording"),
+            "tod_excess_value_usd_at_fee50k": tod_r.get("excess_value_usd"),
             # Parking Requirement Reduction: does NOT change eligibility or unit
             # count vs. ADU (see run_parking_reduction_scenario docstring) --
             # its own metric is land consumed by the current parking requirement.
@@ -139,6 +148,10 @@ def main() -> None:
                     "affordability_mortgage_rate": bm.HAWAII_MORTGAGE_RATE_30YR_FIXED,
                     "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
                     "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
+                    "development_fee_default_usd": bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+                    "development_fee_slider_min_usd": bm.DEVELOPMENT_FEE_SLIDER_MIN_USD,
+                    "development_fee_slider_max_usd": bm.DEVELOPMENT_FEE_SLIDER_MAX_USD,
+                    "development_fee_source_note": bm.DEVELOPMENT_FEE_SOURCE_NOTE,
                     "affordability_note": (
                         "Of the feasibility-adjusted units, pct_affording is the real share of "
                         "that TRACT's OWN households whose income clears the mortgage/rent bar "
