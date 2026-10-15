@@ -45,6 +45,21 @@ def main() -> None:
     mm_gated = bm.apply_feasibility_gate(mm_tract, feas, "additional_estimated_units")
     tod_gated = bm.apply_feasibility_gate(tod_tract, feas, "additional_estimated_units")
 
+    # Third gate: of the feasibility-adjusted units, what share could the
+    # tract's OWN households actually afford, under standard mortgage/rent
+    # underwriting (bm.tract_affordability_constrained_capacity())? ADU and
+    # Missing Middle both use feas's for-sale product; TOD uses the single
+    # countywide Zillow rent figure (no tract-level TOD-product sale price
+    # exists -- it's new multifamily rental, not the townhome-resale
+    # product feas prices). See docs/MODEL_AND_ASSUMPTIONS.md's
+    # Affordability-Constrained Demand section for the finding this
+    # surfaced -- it is NOT a small correction.
+    afford_for_sale = bm.tract_affordability_constrained_capacity(sales_feasibility_df=feas, tenure="for_sale")
+    afford_rental = bm.tract_affordability_constrained_capacity(tenure="rental")
+    adu_gated = bm.apply_affordability_gate(adu_gated, afford_for_sale, "feasibility_adjusted_units")
+    mm_gated = bm.apply_affordability_gate(mm_gated, afford_for_sale, "feasibility_adjusted_units")
+    tod_gated = bm.apply_affordability_gate(tod_gated, afford_rental, "feasibility_adjusted_units")
+
     acs = pd.read_csv(RAW_DIR / "acs_commute_density_kauai.csv")
     acs["GEOID"] = acs["GEOID"].astype(str)
 
@@ -81,10 +96,12 @@ def main() -> None:
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
             "adu_feasible": adu_r.get("feasible"),
+            "adu_pct_affording": adu_r.get("pct_households_affording"),
             # Missing Middle
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_feasible": mm_r.get("feasible"),
+            "mm_pct_affording": mm_r.get("pct_households_affording"),
             # Transit-Oriented Density
             "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
             # Computed at the statute's base FAR (4.0); the dashboard's FAR
@@ -94,6 +111,7 @@ def main() -> None:
             # at other FAR values), noted in the UI.
             "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
             "tod_feasible": tod_r.get("feasible"),
+            "tod_pct_affording": tod_r.get("pct_households_affording"),
             # Parking Requirement Reduction: does NOT change eligibility or unit
             # count vs. ADU (see run_parking_reduction_scenario docstring) --
             # its own metric is land consumed by the current parking requirement.
@@ -118,6 +136,17 @@ def main() -> None:
                     "default_absorption_rate": default_absorption_rate,
                     "tod_far_default": bm.TOD_FAR_BASE,
                     "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
+                    "affordability_mortgage_rate": bm.HAWAII_MORTGAGE_RATE_30YR_FIXED,
+                    "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
+                    "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
+                    "affordability_note": (
+                        "Of the feasibility-adjusted units, pct_affording is the real share of "
+                        "that TRACT's OWN households whose income clears the mortgage/rent bar "
+                        "for the comps-implied price (ADU/Missing Middle: 20% down, 7.000% 30-yr "
+                        "fixed, HiCentral 2026-10-14; TOD: countywide Zillow ZORI rent), per ACS "
+                        "B19001 income brackets -- not a median-based guess. This is a demand-side "
+                        "ceiling, separate from and multiplicative with the absorption rate."
+                    ),
                 },
             }
         )

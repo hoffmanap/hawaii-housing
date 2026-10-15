@@ -296,3 +296,77 @@ def test_tract_comps_feasibility_requires_sales_file():
         build_model.tract_comps_development_fee_reduction_feasibility(
             sales_joined_csv=Path("/nonexistent/kauai_sales_2026_joined.csv")
         )
+
+
+def test_required_income_for_sale_price_matches_hand_calc():
+    """
+    Regression guard on the mortgage math itself: 20% down, 7.000% 30-yr
+    fixed (HAWAII_MORTGAGE_RATE_30YR_FIXED, HiCentral 2026-10-14), 30%
+    income share. Hand-computed for an $890,625 sale price: loan
+    $712,500, monthly P&I ~$4,741, required income ~$189,6xx.
+    """
+    required = build_model._required_income_for_sale_price(890_625)
+    assert 188_000 < required < 192_000
+
+
+def test_required_income_for_rent_is_annualized_and_divided_by_income_share():
+    """$3,708/month at the 30% rule should back into ~$148,320/year."""
+    required = build_model._required_income_for_rent(3_708)
+    assert required == pytest.approx(3_708 * 12 / 0.30)
+
+
+def test_pct_households_above_income_interpolates_within_bracket():
+    """
+    A threshold landing inside one bracket should only count that
+    bracket's households proportionally, not all-or-nothing -- this
+    guards the interpolation logic directly against a synthetic,
+    easy-to-hand-check two-bracket distribution.
+    """
+    brackets = {"hh_income_50000_60000": 100, "hh_income_60000_75000": 100}
+    # Monkeypatch-free: use the real bracket table but only populate two columns;
+    # every other bracket defaults to 0 via dict.get in the function itself.
+    pct = build_model._pct_households_above_income(brackets, total_households=200, required_income=67_500)
+    # 50-60k bracket: fully below 67,500 -> 0 qualify.
+    # 60-75k bracket: 67,500 is 50% of the way from 60k to 75k -> half (50) qualify.
+    assert pct == pytest.approx(100 * 50 / 200)
+
+
+def test_pct_households_above_income_top_bracket_is_open_ended():
+    """The $200k+ bracket has no upper bound to interpolate against: it
+    counts fully if the threshold is below $200k, not at all if at/above it."""
+    brackets = {"hh_income_200000_plus": 40}
+    below = build_model._pct_households_above_income(brackets, total_households=40, required_income=199_000)
+    above = build_model._pct_households_above_income(brackets, total_households=40, required_income=200_001)
+    assert below == pytest.approx(100.0)
+    assert above == pytest.approx(0.0)
+
+
+def test_affordability_constrained_capacity_rejects_for_sale_without_feasibility_df():
+    """
+    tenure='for_sale' needs a feasibility DataFrame with scaled_sale_price_usd
+    per tract -- there's no single countywide for-sale price the way TOD's
+    rental tenure has one countywide ZORI figure, so this must fail loudly
+    rather than guess a price.
+    """
+    with pytest.raises(ValueError):
+        build_model.tract_affordability_constrained_capacity(tenure="for_sale", sales_feasibility_df=None)
+
+
+def test_apply_affordability_gate_scales_not_toggles():
+    """
+    Unlike apply_feasibility_gate's binary zero/keep, the affordability
+    gate should scale PROPORTIONALLY by pct_households_affording -- a
+    tract where only 25% of households clear the income bar should show
+    25% of the feasibility-adjusted units, not all-or-nothing.
+    """
+    import pandas as pd
+
+    scenario = pd.DataFrame(
+        {"GEOID": ["15007000100", "15007000200"], "feasibility_adjusted_units": [10.0, 8.0]}
+    )
+    affordability = pd.DataFrame(
+        {"GEOID": ["15007000100", "15007000200"], "pct_households_affording": [25.0, 0.0],
+         "required_income_usd": [200_000, 400_000]}
+    )
+    gated = build_model.apply_affordability_gate(scenario, affordability)
+    assert list(gated["affordability_adjusted_units"]) == [2.5, 0.0]

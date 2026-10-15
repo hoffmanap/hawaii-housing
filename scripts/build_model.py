@@ -1285,6 +1285,240 @@ def tract_comps_development_fee_reduction_feasibility(
     return pd.DataFrame(rows)
 
 
+# Hawaii 30-year fixed mortgage rate, HiCentral (Honolulu Board of
+# REALTORS), https://www.hicentral.com/hawaii-mortgage-rates.php,
+# confirmed live 2026-10-15 (page dated 2026-10-14). The page itself
+# quotes rate/APR by lender for "20 percent down, $200,000 owner-occupant
+# mortgages" -- nine lenders listed, 30-yr fixed rate ranging 6.750% to
+# 9.625%; the 9.625% figure (Matanuska Valley FCU, an Alaska-based credit
+# union, not a Hawaii-market lender) is excluded as an outlier, leaving a
+# median 30-yr fixed rate of 7.000% across the eight Hawaii-market
+# lenders. Used, with the same 20% down convention the page itself uses,
+# to back required household income out of a sale price -- see
+# tract_affordability_constrained_capacity() below.
+HAWAII_MORTGAGE_RATE_30YR_FIXED = 0.070
+HAWAII_MORTGAGE_DOWN_PAYMENT_PCT = 0.20
+HAWAII_MORTGAGE_TERM_YEARS = 30
+
+# Standard affordability underwriting thresholds: housing cost (principal
+# + interest for a mortgage, gross rent for a rental) should not exceed
+# this share of gross household income. 30% is the HUD/Census standard
+# "cost-burdened" threshold, used here as the affordability bar rather
+# than a project-invented number.
+AFFORDABILITY_INCOME_SHARE = 0.30
+
+
+def _required_income_for_sale_price(sale_price_usd: float) -> float:
+    """
+    Backs the household income required to afford `sale_price_usd` out of
+    a standard mortgage calculation: 20% down (HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
+    matching the HiCentral quote convention), amortized over
+    HAWAII_MORTGAGE_TERM_YEARS at HAWAII_MORTGAGE_RATE_30YR_FIXED, with the
+    monthly principal+interest payment capped at AFFORDABILITY_INCOME_SHARE
+    of gross monthly income.
+
+    STATED SIMPLIFICATION: this prices principal + interest only, not full
+    PITI (property tax, homeowner's insurance, HOA/CPR fees, which are
+    common on Kauai condo/CPR units) -- no Hawaii-specific property-tax-
+    rate or insurance-cost source is in this project yet. Required income
+    is therefore an UNDERSTATE of the true bar -- the real percentage of
+    households who can afford a unit is at or below what this computes,
+    never above it.
+    """
+    loan_amount = sale_price_usd * (1 - HAWAII_MORTGAGE_DOWN_PAYMENT_PCT)
+    monthly_rate = HAWAII_MORTGAGE_RATE_30YR_FIXED / 12
+    n_payments = HAWAII_MORTGAGE_TERM_YEARS * 12
+    monthly_pi = loan_amount * (monthly_rate * (1 + monthly_rate) ** n_payments) / (
+        (1 + monthly_rate) ** n_payments - 1
+    )
+    annual_pi = monthly_pi * 12
+    return annual_pi / AFFORDABILITY_INCOME_SHARE
+
+
+def _required_income_for_rent(monthly_rent_usd: float) -> float:
+    """Annual income required to keep rent at AFFORDABILITY_INCOME_SHARE of gross income."""
+    return (monthly_rent_usd * 12) / AFFORDABILITY_INCOME_SHARE
+
+
+def _pct_households_above_income(bracket_counts: dict, total_households: int, required_income: float) -> float:
+    """
+    Real percentage of a tract's households with income >= required_income,
+    computed from ACS B19001's 16 income brackets (fetch_data.fetch_acs_
+    income_distribution()) rather than a median-based yes/no. Households in
+    brackets entirely above the threshold count fully; the one bracket the
+    threshold falls inside is split by linear interpolation (assumes income
+    is spread uniformly within that bracket -- a standard, stated
+    simplification, not a claim of the true within-bracket distribution).
+    The open-ended top bracket ($200,000+) counts fully if the threshold is
+    below $200,000, or not at all if the threshold itself is >= $200,000
+    (no upper bound to interpolate against).
+    """
+    if total_households <= 0:
+        return 0.0
+    qualifying = 0.0
+    for col, lo, hi in ACS_B19001_BRACKETS_FOR_MODEL:
+        count = bracket_counts.get(col, 0)
+        if hi is None:  # open-ended top bracket
+            if required_income <= lo:
+                qualifying += count
+            continue
+        if required_income <= lo:
+            qualifying += count
+        elif required_income < hi:
+            frac_above = (hi - required_income) / (hi - lo)
+            qualifying += count * frac_above
+        # else required_income >= hi: none of this bracket qualifies
+    return 100 * qualifying / total_households
+
+
+# Mirrors fetch_data.ACS_B19001_BRACKETS's (lo, hi) tiers, keyed to the
+# column names fetch_acs_income_distribution() actually writes, so this
+# module doesn't import fetch_data.py just for one constant.
+ACS_B19001_BRACKETS_FOR_MODEL = [
+    ("hh_income_0_10000", 0, 10_000),
+    ("hh_income_10000_15000", 10_000, 15_000),
+    ("hh_income_15000_20000", 15_000, 20_000),
+    ("hh_income_20000_25000", 20_000, 25_000),
+    ("hh_income_25000_30000", 25_000, 30_000),
+    ("hh_income_30000_35000", 30_000, 35_000),
+    ("hh_income_35000_40000", 35_000, 40_000),
+    ("hh_income_40000_45000", 40_000, 45_000),
+    ("hh_income_45000_50000", 45_000, 50_000),
+    ("hh_income_50000_60000", 50_000, 60_000),
+    ("hh_income_60000_75000", 60_000, 75_000),
+    ("hh_income_75000_100000", 75_000, 100_000),
+    ("hh_income_100000_125000", 100_000, 125_000),
+    ("hh_income_125000_150000", 125_000, 150_000),
+    ("hh_income_150000_200000", 150_000, 200_000),
+    ("hh_income_200000_plus", 200_000, None),
+]
+
+
+def tract_affordability_constrained_capacity(
+    income_csv: Path | None = None,
+    sales_feasibility_df: pd.DataFrame | None = None,
+    tenure: str = "for_sale",
+) -> pd.DataFrame:
+    """
+    The third gate, distinct from feasibility: feasibility
+    (kauai_development_fee_reduction_feasibility()/tract_comps_...()) asks
+    whether a developer could profitably build and sell/rent at the
+    comps-implied price. This asks a different question -- given that
+    price, what share of the tract's OWN households could actually afford
+    it? A tract can be feasible and still be a market of a handful of
+    households able to pay the required price; this gate makes that
+    explicit instead of leaving it assumed away.
+
+    For `tenure="for_sale"`: uses each tract's `scaled_sale_price_usd`
+    from tract_comps_development_fee_reduction_feasibility() (or the ACS-
+    scaled version, if that's what's passed in), backs out the required
+    household income via _required_income_for_sale_price() (20% down,
+    7.000% 30-yr fixed, HiCentral 2026-10-14 -- see
+    HAWAII_MORTGAGE_RATE_30YR_FIXED), then looks up the real percentage of
+    that tract's households clearing that bar from ACS B19001.
+
+    For `tenure="rental"`: uses the single countywide Zillow ZORI figure
+    (KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH) rather than a tract-scaled rent --
+    no tract-level Kauai rent source exists (see DATA_SOURCES.md's Zillow
+    section), so every tract gets the same required-income bar for rental
+    product; only the income distribution varies by tract.
+
+    Returns one row per tract: `required_income_usd`, `pct_households_affording`,
+    and (where `sales_feasibility_df` is for_sale) the comps price used.
+    This is a PERCENTAGE, not a unit count -- apply_affordability_gate()
+    below is what multiplies it onto a scenario's unit estimate.
+    """
+    path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
+            "--county kauai` first (needs CENSUS_API_KEY)."
+        )
+    income = pd.read_csv(path, dtype={"GEOID": str})
+
+    rows = []
+    if tenure == "for_sale":
+        if sales_feasibility_df is None:
+            raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
+        feas = sales_feasibility_df.copy()
+        feas["GEOID"] = feas["GEOID"].astype(str)
+        merged = income.merge(feas[["GEOID", "scaled_sale_price_usd"]], on="GEOID", how="inner")
+        for _, tract in merged.iterrows():
+            required_income = _required_income_for_sale_price(tract["scaled_sale_price_usd"])
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": round(tract["scaled_sale_price_usd"]),
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    elif tenure == "rental":
+        required_income = _required_income_for_rent(KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH)
+        for _, tract in income.iterrows():
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH,
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    else:
+        raise ValueError(f"tenure must be 'for_sale' or 'rental', got {tenure!r}")
+    return pd.DataFrame(rows)
+
+
+def apply_affordability_gate(
+    scenario_tract_df: pd.DataFrame,
+    affordability_df: pd.DataFrame,
+    units_col: str = "feasibility_adjusted_units",
+) -> pd.DataFrame:
+    """
+    Stacks on top of apply_feasibility_gate(), not instead of it: scales
+    `units_col` (normally the feasibility-adjusted number) by
+    `pct_households_affording` / 100 -- a demand-side ceiling, not a
+    second yes/no toggle. A tract where a project is feasible for a
+    developer but only 8% of local households clear the required-income
+    bar now shows ~8% of the feasibility-adjusted units as the realistic,
+    market-supportable number, instead of implying every feasible unit
+    would actually find a paying household.
+
+    STATED SIMPLIFICATION: this treats "% of tract households who could
+    afford the unit" as a direct ceiling on units absorbed in that tract,
+    which assumes buyers/renters come from the same tract rather than a
+    wider commute-shed or move-in population -- a conservative, locally-
+    grounded assumption (undercounts regional demand), not a claim that
+    every qualifying household in a tract is in the market for a new
+    unit this year (that's still what the separate absorption rate is
+    for). The two are multiplicative: affordability narrows WHO could
+    ever pay for a unit; absorption rate narrows how many of those who
+    could, do, in a given year.
+    """
+    scenario_tract_df = scenario_tract_df.copy()
+    scenario_tract_df["GEOID"] = scenario_tract_df["GEOID"].astype(str)
+    affordability_df = affordability_df.copy()
+    affordability_df["GEOID"] = affordability_df["GEOID"].astype(str)
+    merged = scenario_tract_df.merge(
+        affordability_df[["GEOID", "pct_households_affording", "required_income_usd"]],
+        on="GEOID",
+        how="left",
+    )
+    merged["pct_households_affording"] = merged["pct_households_affording"].fillna(0.0)
+    merged["affordability_adjusted_units"] = (
+        merged[units_col] * merged["pct_households_affording"] / 100
+    )
+    return merged
+
+
 def apply_feasibility_gate(
     scenario_tract_df: pd.DataFrame,
     feasibility_df: pd.DataFrame,

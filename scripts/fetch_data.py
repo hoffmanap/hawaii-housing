@@ -192,6 +192,95 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
     return written
 
 
+# ACS 5-year detailed table B19001 (Household Income in the Past 12 Months,
+# in 2022 inflation-adjusted dollars) -- the 16 income brackets plus total,
+# confirmed against the Census API's own variable listing 2026-10-15.
+# Pulled for the affordability-constrained-demand gate the user asked for
+# 2026-10-15: feasibility (kauai_development_fee_reduction_feasibility())
+# only tests whether a developer's return pencils at the comps-implied
+# sale price/rent; it says nothing about how many actual households in a
+# tract could afford that price. A tract median (B19013, already
+# available via B25077's sibling table) only answers that for the
+# "typical" household -- the bracket-level distribution here lets
+# tract_affordability_constrained_capacity() compute a real percentage of
+# households clearing a required-income threshold, via linear
+# interpolation within whichever bracket the threshold falls in, instead
+# of a median-based yes/no.
+ACS_B19001_BRACKETS = [
+    ("B19001_002E", 0, 10_000),
+    ("B19001_003E", 10_000, 15_000),
+    ("B19001_004E", 15_000, 20_000),
+    ("B19001_005E", 20_000, 25_000),
+    ("B19001_006E", 25_000, 30_000),
+    ("B19001_007E", 30_000, 35_000),
+    ("B19001_008E", 35_000, 40_000),
+    ("B19001_009E", 40_000, 45_000),
+    ("B19001_010E", 45_000, 50_000),
+    ("B19001_011E", 50_000, 60_000),
+    ("B19001_012E", 60_000, 75_000),
+    ("B19001_013E", 75_000, 100_000),
+    ("B19001_014E", 100_000, 125_000),
+    ("B19001_015E", 125_000, 150_000),
+    ("B19001_016E", 150_000, 200_000),
+    ("B19001_017E", 200_000, None),  # "$200,000 or more" -- open-ended top bracket
+]
+ACS_B19001_VARS = ["B19001_001E"] + [v for v, _, _ in ACS_B19001_BRACKETS]  # total + 16 brackets
+
+
+def fetch_acs_income_distribution(county: str, out_path: Path) -> int:
+    """
+    Tract-level ACS 5-year household-income distribution (B19001) for one
+    Hawaii county -- 16 income brackets plus the total household count.
+    Same CENSUS_API_KEY requirement and vintage (2022 ACS 5-year) as
+    fetch_acs_commute_density(), so these two layers' income-dollar figures
+    are on the same inflation-adjustment basis.
+
+    Written wide (one column per bracket, raw household counts) rather
+    than pre-computed into a "% above $X" figure, since the required-
+    income threshold in tract_affordability_constrained_capacity() changes
+    by scenario/typology -- the interpolation has to happen downstream,
+    against whatever threshold that scenario's sale price or rent implies.
+    """
+    key = os.environ.get("CENSUS_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "CENSUS_API_KEY environment variable not set -- get a free key at "
+            "https://api.census.gov/data/key_signup.html and set it in .env "
+            "(gitignored) or the environment before running this layer."
+        )
+    county_fips = COUNTY_FIPS[county]
+    get_vars = ",".join(["NAME", *ACS_B19001_VARS])
+    url = (
+        "https://api.census.gov/data/2022/acs/acs5"
+        f"?get={get_vars}&for=tract:*&in=state:15+county:{county_fips}&key={key}"
+    )
+    payload = _get_json_with_retries(url)
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError(f"Unexpected Census API response for {county}: {str(payload)[:300]}")
+    cols, rows = payload[0], payload[1:]
+
+    bracket_cols = [f"hh_income_{lo}_{hi if hi is not None else 'plus'}" for _, lo, hi in ACS_B19001_BRACKETS]
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["GEOID", "name", "total_households", *bracket_cols])
+        for row in rows:
+            record = dict(zip(cols, row))
+            geoid = record["state"] + record["county"] + record["tract"]
+            total = int(record["B19001_001E"])
+            if total == ACS_NULL_SENTINEL or total <= 0:
+                continue
+            bracket_counts = []
+            for var, _, _ in ACS_B19001_BRACKETS:
+                val = int(record[var])
+                bracket_counts.append(0 if val == ACS_NULL_SENTINEL else val)
+            writer.writerow([geoid, record["NAME"], total, *bracket_counts])
+            written += 1
+    return written
+
+
 HDOT_HPMS_ROADS_LAYER_URL = "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/12"
 ARTERIAL_F_SYSTEM_VALUES = ("Principal Arterial", "Minor Arterial")
 
@@ -446,7 +535,7 @@ def main() -> None:
         choices=list(LAYERS)
         + [
             "building_footprints", "census_tracts", "acs_commute_density",
-            "kauai_bus_major_stops", "kauai_arterial_roads", "all",
+            "acs_income_distribution", "kauai_bus_major_stops", "kauai_arterial_roads", "all",
         ],
         default="all",
         help="Which named layer to fetch (default: all)",
@@ -463,6 +552,13 @@ def main() -> None:
         out_path = RAW_DIR / f"acs_commute_density_{args.county}.csv"
         print(f"Fetching acs_commute_density for {args.county} (Census API)...")
         count = fetch_acs_commute_density(args.county, out_path)
+        print(f"  {count} tracts -> {out_path}")
+        return
+
+    if args.layer == "acs_income_distribution":
+        out_path = RAW_DIR / f"acs_income_distribution_{args.county}.csv"
+        print(f"Fetching acs_income_distribution for {args.county} (Census API)...")
+        count = fetch_acs_income_distribution(args.county, out_path)
         print(f"  {count} tracts -> {out_path}")
         return
 

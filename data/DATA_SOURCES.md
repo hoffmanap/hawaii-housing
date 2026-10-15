@@ -119,6 +119,15 @@ A companion OPSD deliverable (https://files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDT
 
 - **Role:** not yet wired into a scenario. This is the real cap-rate/opex/rent-to-value data a proper multifamily *rental* pro forma for the TOD scenario's denser parcels would need, in combination with the Kauai countywide Zillow ZORI figure above -- flagged as the next real step once the eligibility-footprint question is resolved.
 
+## Household income distribution + Hawaii mortgage rates: affordability-constrained demand gate (added 2026-10-15)
+
+**Census Bureau ACS 5-year detailed table B19001** (Household Income in the Past 12 Months, 2022 inflation-adjusted dollars), tract-level, via the Census API -- same vintage/key requirement as the commute/density layer above. `fetch_data.py --layer acs_income_distribution --county kauai` writes `data/raw/acs_income_distribution_kauai.csv`: 16 real income brackets plus total households per tract (17 Kauai tracts, verified live 2026-10-15).
+
+**HiCentral (Honolulu Board of REALTORS), Hawaii mortgage rates** (https://www.hicentral.com/hawaii-mortgage-rates.php, confirmed live 2026-10-15, page dated 2026-10-14) -- real, current rate/APR quotes by lender for "20 percent down, $200,000 owner-occupant mortgages." Nine Hawaii-area lenders listed; 30-year fixed rates ranged 6.750%-9.625% (excluding one Alaska-based credit union outlier not really a Hawaii-market lender, the range was 6.750%-7.000%). Used median of the eight Hawaii-market lenders' 30-yr fixed rate, **7.000%**, with the page's own 20%-down convention.
+
+- **Role:** these two sources together let the model answer a question feasibility alone can't -- of the comps-implied sale price or rent a feasible project would charge, what share of a tract's OWN households could actually afford it, per real ACS income brackets rather than a tract median. `build_model.tract_affordability_constrained_capacity()` backs required household income out of each price (standard 20%-down/30-yr-fixed/30%-of-income underwriting) and interpolates the real percentage of qualifying households from B19001's brackets. See `docs/MODEL_AND_ASSUMPTIONS.md`'s Affordability-Constrained Demand section for the finding this produced -- 0% of Kauai households clear the bar for the for-sale ADU/Missing Middle product in every tract, a genuine (not fabricated) result, not a modeling artifact.
+- **Stated simplification:** backs out income from principal + interest only, not full PITI (property tax, homeowner's insurance, HOA/CPR fees) -- no Hawaii-specific property-tax-rate or insurance-cost source is in this project yet, so the required-income figure understates the true affordability bar (the real qualifying percentage is at or below what this model computes, never above it).
+
 ## Supplementary national datasets (for baseline / economic context)
 
 - U.S. Census Bureau / ACS — demographic and housing stock context
