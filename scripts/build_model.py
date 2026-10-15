@@ -1284,6 +1284,121 @@ def kauai_development_fee_reduction_feasibility(
     }
 
 
+# Real, Honolulu/Oahu-specific development pro forma inputs, digitized
+# 2026-10-15 from the SAME "Real Estate Assumptions" table as
+# KAUAI_LIHUE_PRO_FORMA_INPUTS above (same source report, page 52,
+# user-supplied screenshots) -- this time the "Iwilei-Kapalama (O'ahu)"
+# column. Notably, Oahu is this table's BASE-COST geography, not a
+# derived figure: the other three sites' Low/Mid/High-Rise hard costs are
+# a stated percentage premium over Oahu's own ($570 Maui = $475 Oahu x
+# 1.20; $594 Kaua'i = $475 x 1.25; $532 Hawai'i x ~1.12) -- confirmed by
+# cross-checking those arithmetic relationships against the table's own
+# "Premium from O'ahu" row, not assumed.
+#
+# Oahu's own reference product in this table is Low/Mid/High-Rise
+# FOR-SALE (a denser TOD-corridor typology), NOT the townhome-for-sale
+# product Kauai/Maui/Hawai'i County are modeled on -- the table's
+# Townhome-for-sale row is blank for Oahu. This is an honest difference
+# in what the source itself populated, not a simplification made here --
+# no townhome_for_sale entry is included below because the source gives
+# none for this geography.
+OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS = {
+    "lowrise_for_sale": {
+        "unit_size_gsf": 840,  # 700 GSF rental base x 1.20 for-sale size premium -- shared row, all 4 sites
+        "hard_cost_per_gsf_usd": 475,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 646_800, "affordable": 643_000},
+    },
+    "midrise_for_sale": {
+        "unit_size_gsf": 840,
+        "hard_cost_per_gsf_usd": 475,  # table repeats the same Low-Rise figure for Mid-Rise, all 4 sites
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 679_140, "affordable": 643_000},
+    },
+    "highrise_for_sale": {
+        "unit_size_gsf": 840,
+        "hard_cost_per_gsf_usd": 475,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 711_480, "affordable": 643_000},
+    },
+}
+# "Average Price Per SF, Mid- and High-Density Residential" -- Oahu column.
+# An order of magnitude above Kauai's $36: Iwilei-Kapalama is an urban
+# Honolulu TOD corridor, not Lihu'e's town core, and the source's own land
+# comps reflect that real difference rather than a modeling choice made
+# here.
+OAHU_IWILEI_KAPALAMA_LAND_PRICE_PER_BUILDING_GSF_USD = 225
+# Financing terms and the 15% for-sale profit margin are the SAME across
+# all four of this table's TOD sites -- explicitly grouped under the
+# source's own "Shared Assumptions" heading, not a coincidence or a reuse
+# shortcut taken here. KAUAI_LIHUE_FINANCING and
+# KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE are reused as-is below
+# despite their Kauai-specific names, because the underlying source values
+# genuinely don't vary by geography in this table.
+
+
+def oahu_iwilei_kapalama_development_fee_reduction_feasibility(
+    typology: str = "lowrise_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float | None = None,
+) -> dict:
+    """
+    Honolulu/Oahu analog of kauai_development_fee_reduction_feasibility(),
+    same "excess value" feasibility test (market value minus total
+    development cost minus required developer profit -- see
+    docs/MODEL_AND_ASSUMPTIONS.md), same two explicit simplifications
+    (land cost allocated per building-GSF rather than a true site-area/FAR
+    basis; financing cost uses an average-outstanding-balance
+    approximation rather than a full monthly draw schedule).
+
+    development_fee_usd defaults to Honolulu's own real development-fee
+    schedule midpoint (HAWAII_DEVELOPMENT_FEE_COMPONENTS_USD -- sourced to
+    Honolulu DPP directly, unlike the Challenge's standardized $50,000
+    default used elsewhere), since this function is Honolulu-specific and
+    a more accurate default is available for it specifically.
+    """
+    if development_fee_usd is None:
+        development_fee_usd = sum(
+            (lo + hi) / 2 for lo, hi in HAWAII_DEVELOPMENT_FEE_COMPONENTS_USD.values()
+        )
+    inputs = OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology]
+    unit_size = inputs["unit_size_gsf"]
+    hard_cost = unit_size * inputs["hard_cost_per_gsf_usd"]
+    soft_cost = hard_cost * inputs["soft_cost_pct_of_hard"]
+    land_cost = unit_size * OAHU_IWILEI_KAPALAMA_LAND_PRICE_PER_BUILDING_GSF_USD
+    cost_before_financing_and_fee = hard_cost + soft_cost + land_cost
+
+    fin = KAUAI_LIHUE_FINANCING  # shared across all 4 sites in the source table -- see note above
+    loan_amount = cost_before_financing_and_fee * fin["loan_to_cost"]
+    construction_years = fin["construction_period_months"] / 12
+    financing_interest = loan_amount * fin["construction_interest_rate"] * construction_years * 0.5
+    financing_fees = loan_amount * (fin["construction_loan_fee_pct"] + fin["permanent_loan_fee_pct"])
+    financing_cost = financing_interest + financing_fees
+
+    total_development_cost = cost_before_financing_and_fee + financing_cost + development_fee_usd
+    sale_price = inputs["sale_price_per_unit_usd"][affordability]
+    required_developer_profit = sale_price * KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE
+    excess_value = sale_price - total_development_cost - required_developer_profit
+
+    return {
+        "typology": typology,
+        "affordability": affordability,
+        "development_fee_usd": round(development_fee_usd),
+        "hard_cost_usd": round(hard_cost),
+        "soft_cost_usd": round(soft_cost),
+        "land_cost_usd": round(land_cost),
+        "financing_cost_usd": round(financing_cost),
+        "total_development_cost_usd": round(total_development_cost),
+        "sale_price_usd": sale_price,
+        "required_developer_profit_usd": round(required_developer_profit),
+        "excess_value_usd": round(excess_value),
+        "feasible": excess_value >= 0,
+        "source": "HR&A Advisors et al., 'Financial Analysis of TOD Infrastructure Funding and "
+        "Financing Options,' State of Hawaii OPSD, 2023 -- Real Estate Assumptions table, "
+        "Iwilei-Kapalama (O'ahu) column.",
+    }
+
+
 # Kauai countywide median home value (ACS 2022 5-year, B25077), used ONLY as
 # the denominator to scale the Lihu'e Town Core pro forma's reference sale
 # price to each tract's own housing market -- see
