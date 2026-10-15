@@ -665,6 +665,60 @@ TOD_DENSITY_SOURCE_NOTE = (
 )
 
 
+def tract_to_place_crosswalk(
+    tracts_geojson: Path | None = None, places_geojson: Path | None = None
+) -> pd.DataFrame:
+    """
+    Real Census tract -> place-name crosswalk, for the dashboard's tract/
+    municipality toggle (per the user's 2026-10-15 point: "no one
+    associates a place by tract number, but they do associate with the
+    names of places"). Hawaii has NO incorporated cities -- the whole
+    state is unincorporated outside county government -- so Census
+    Designated Places (CDPs: Lihu'e, Kapa'a, Koloa, ...), not
+    "incorporated places," are the only real place-name geography that
+    exists here (fetch_data.py --layer census_places, TIGERweb layer 5).
+
+    Assigns each tract to whichever CDP covers the LARGEST SHARE of its
+    land area (not just whichever CDP contains the tract's centroid,
+    which can misassign an irregularly-shaped tract) -- a real spatial
+    join, not a hand-typed guess at which town a tract number belongs to.
+    A tract with no CDP overlap at all (true rural/unincorporated land
+    outside any named place) is labeled "Rural Kaua'i (unincorporated)"
+    rather than forced into a nearby town's name it doesn't actually
+    cover.
+    """
+    tracts_path = tracts_geojson or (RAW_DIR / "census_tracts.json")
+    places_path = places_geojson or (RAW_DIR / "census_places.json")
+    if not tracts_path.exists() or not places_path.exists():
+        raise RuntimeError(
+            f"Need both {tracts_path} and {places_path} -- run "
+            "`fetch_data.py --layer census_tracts` and `--layer census_places` first."
+        )
+    tracts = gpd.read_file(tracts_path)
+    places = gpd.read_file(places_path)
+    tracts = tracts[tracts["GEOID"].astype(str).str.startswith("15007")].copy()  # Kauai only
+    places["place_name"] = places["NAME"].str.replace(" CDP", "", regex=False)
+
+    rows = []
+    for _, tract in tracts.iterrows():
+        tract_geom = tract.geometry
+        tract_area = tract_geom.area
+        best_name, best_frac = None, 0.0
+        for _, place in places.iterrows():
+            overlap = tract_geom.intersection(place.geometry).area
+            if tract_area > 0 and overlap / tract_area > best_frac:
+                best_frac = overlap / tract_area
+                best_name = place["place_name"]
+        rows.append(
+            {
+                "GEOID": tract["GEOID"],
+                "place_name": best_name if best_frac >= 0.1 else "Rural Kaua'i (unincorporated)",
+                "place_overlap_frac": round(best_frac, 2),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def kauai_tod_eligible_parcels(
     major_stops_csv: Path | None = None, arterial_roads_geojson: Path | None = None
 ) -> pd.DataFrame:

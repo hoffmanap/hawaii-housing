@@ -31,6 +31,48 @@ RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 OUT_PATH = Path(__file__).parent.parent / "data" / "sample" / "kauai_dashboard.geojson"
 
 
+def _zillow_timeseries_for_metadata() -> dict:
+    """
+    Real monthly history (not just the latest value) of Kauai County's
+    Zillow ZORI/ZHVI, for the Existing Conditions "over time" chart --
+    feeds the user's 2026-10-15 point that trend data "better reflects
+    the urgency of the call to action" than a single snapshot.
+    """
+    path = RAW_DIR / "zillow_kauai_county_timeseries.csv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path)
+    out = {}
+    for series in ("zori", "zhvi"):
+        sub = df[df["series"] == series].sort_values("date")
+        out[series] = {"dates": sub["date"].tolist(), "values": sub["value"].round(0).tolist()}
+    return out
+
+
+def _sales_monthly_trend_for_metadata() -> list:
+    """
+    Real month-by-month median $/building-sqft from the user-supplied
+    Kauai sales exports (Jan-Jun 2026) -- only six months, but real
+    transactions, not interpolated -- same "data over time" request.
+    """
+    path = Path(__file__).parent.parent / "data" / "processed" / "kauai_sales_2026_joined.csv"
+    if not path.exists():
+        return []
+    df = pd.read_csv(path, dtype={"GEOID": str})
+    cfg = bm.COUNTY_CONFIG["kauai"]
+    usable = df[
+        (df["building_sqft"] > 0)
+        & df["price_per_sqft"].notna()
+        & df["taxclass"].isin(cfg["existing_residential_taxclasses"])
+    ].copy()
+    usable["month"] = pd.to_datetime(usable["sale_date"]).dt.to_period("M").astype(str)
+    by_month = usable.groupby("month")["price_per_sqft"].agg(["median", "count"]).reset_index()
+    return [
+        {"month": r["month"], "median_price_per_sqft": round(r["median"], 2), "sales_count": int(r["count"])}
+        for _, r in by_month.iterrows()
+    ]
+
+
 def main() -> None:
     bm.build_county("kauai")
     default_absorption_rate = bm.absorption_rate_benchmark_for("kauai")
@@ -62,6 +104,17 @@ def main() -> None:
 
     acs = pd.read_csv(RAW_DIR / "acs_commute_density_kauai.csv")
     acs["GEOID"] = acs["GEOID"].astype(str)
+
+    # Real tract -> place-name crosswalk (per the user's 2026-10-15 request:
+    # "no one associates a place by tract number"). Hawaii has no
+    # incorporated cities, so this is a real spatial join against Census
+    # Designated Place boundaries (fetch_data.py --layer census_places),
+    # not a hand-typed guess -- see tract_to_place_crosswalk()'s docstring.
+    place_by_geoid = {}
+    places_path = RAW_DIR / "census_places.json"
+    if places_path.exists():
+        crosswalk = bm.tract_to_place_crosswalk()
+        place_by_geoid = {r["GEOID"]: r["place_name"] for r in crosswalk.to_dict("records")}
 
     # Existing-conditions baseline data (added 2026-10-15, user request):
     # real income distribution, real sales comps, and the ACS median-rent
@@ -129,6 +182,10 @@ def main() -> None:
         props = {
             "GEOID": geoid,
             "name": feat["properties"].get("NAME"),
+            # Real place name (largest-land-overlap Census Designated Place,
+            # or "Rural Kaua'i (unincorporated)") -- what the dashboard's
+            # tract/municipality toggle groups by.
+            "place_name": place_by_geoid.get(geoid),
             # ADU: gross capacity IS eligible_parcel_count (1 potential unit/parcel).
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
@@ -168,7 +225,13 @@ def main() -> None:
             "median_gross_rent_usd": acs_r.get("median_gross_rent_usd"),
             "pct_alt_mode_commute": acs_r.get("pct_alt_mode_commute"),
             "population": acs_r.get("population"),
+            "commuters_excl_wfh": acs_r.get("commuters_excl_wfh"),
             "density_per_sqmi": acs_r.get("density_per_sqmi"),
+            # Land area, sq mi -- lets the dashboard compute a REAL
+            # place-level density (sum population / sum land area) when
+            # grouping tracts by place, rather than averaging per-tract
+            # density figures (which isn't how density actually aggregates).
+            "area_land_sqmi": (feat["properties"].get("AREALAND") or 0) / 2_589_988.11,
             # Existing Conditions tab: real 2026 sales comps (Jan-Jun,
             # min 5 sales/tract already applied upstream where used for
             # feasibility -- here shown as-is, including thinner tracts,
@@ -200,6 +263,8 @@ def main() -> None:
                     "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
                     "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
                     "countywide_zori_usd_per_month": bm.KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH,
+                    "zillow_timeseries": _zillow_timeseries_for_metadata(),
+                    "sales_monthly_trend": _sales_monthly_trend_for_metadata(),
                     "countywide_median_home_value_usd": bm.KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD,
                     "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
                     "countywide_sales_count_2026": countywide_sales_count,

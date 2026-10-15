@@ -408,6 +408,90 @@ def fetch_kauai_bus_major_stops(out_path: Path) -> int:
     return written
 
 
+TIGERWEB_PLACES_URL = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer"
+TIGERWEB_CDP_LAYER = 5  # Census Designated Places -- Hawaii has no incorporated cities, only CDPs
+
+
+# Zillow Research public data -- no key/login, see data/DATA_SOURCES.md's
+# ZORI section for the ZIP-level-coverage-is-zero-for-Kauai finding that
+# led to using the county-level series here. These URLs are Zillow's own
+# published, versioned filenames (confirmed live 2026-10-15); Zillow
+# changes the filename when it changes the underlying smoothing/seasonal-
+# adjustment methodology, so a 404 here means Zillow renamed the file, not
+# that the county stopped reporting.
+ZILLOW_ZORI_COUNTY_URL = "https://files.zillowstatic.com/research/public_csvs/zori/County_zori_uc_sfrcondomfr_sm_month.csv"
+ZILLOW_ZHVI_COUNTY_URL = "https://files.zillowstatic.com/research/public_csvs/zhvi/County_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+
+
+def fetch_zillow_county_timeseries(county_name: str, out_path: Path) -> int:
+    """
+    Full monthly history (not just the latest value) of Zillow's county-
+    level ZORI (rent index) and ZHVI (home value index) for one Hawaii
+    county, written as one long (date, series, value) CSV -- real data
+    over time, for the Existing Conditions "over time" section (per the
+    user's 2026-10-15 request: "we should be looking also at the data
+    over time... it better reflects the urgency of the call to action").
+
+    `county_name` matches Zillow's own RegionName column exactly, e.g.
+    "Kauai County". ZIP-level Zillow data has zero coverage for Kauai (see
+    data/DATA_SOURCES.md); county-level is the finest grain available,
+    same decision already made for the single-latest-value figure this
+    supplements, not a new one.
+    """
+    import csv as csv_module
+    import io
+
+    rows_out = []
+    for series_name, url in [("zori", ZILLOW_ZORI_COUNTY_URL), ("zhvi", ZILLOW_ZHVI_COUNTY_URL)]:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            text = resp.read().decode("utf-8")
+        reader = csv_module.DictReader(io.StringIO(text))
+        date_cols = [c for c in reader.fieldnames if c[:2] == "20"]
+        for record in reader:
+            if record.get("RegionName") != county_name:
+                continue
+            for date_col in date_cols:
+                val = record.get(date_col)
+                if val:
+                    rows_out.append({"series": series_name, "date": date_col, "value": float(val)})
+            break  # one matching county row per file
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="") as fh:
+        writer = csv_module.DictWriter(fh, fieldnames=["series", "date", "value"])
+        writer.writeheader()
+        writer.writerows(rows_out)
+    return len(rows_out)
+
+
+def fetch_hawaii_census_places(out_path: Path) -> int:
+    """
+    Census-Designated-Place (CDP) boundaries for Hawaii -- what most people
+    actually mean by a place name (Lihu'e, Kapa'a, Koloa, Hanalei, ...).
+    Hawaii has NO incorporated cities (the entire state is unincorporated
+    outside county government), so CDPs (TIGERweb layer 5, not layer 4's
+    "Incorporated Places", which is empty for Hawaii) are the only real
+    place-name geography that exists here. Used by build_dashboard_data.py
+    to aggregate tract-level stats up to place names for the dashboard's
+    tract/municipality toggle -- real CDP boundaries, not hand-typed
+    tract-to-place guesses.
+    """
+    params = {
+        "where": "STATE='15'",
+        "outFields": "GEOID,NAME,BASENAME",
+        "f": "geojson",
+        "returnGeometry": "true",
+    }
+    url = f"{TIGERWEB_PLACES_URL}/{TIGERWEB_CDP_LAYER}/query?{urllib.parse.urlencode(params)}"
+    payload = _get_json_with_retries(url)
+    if "error" in payload:
+        raise RuntimeError(f"TIGERweb error: {payload['error']}")
+    features = payload.get("features", [])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return len(features)
+
+
 def fetch_hawaii_census_tracts(out_path: Path) -> int:
     params = {
         "where": "STATE='15'",
@@ -534,8 +618,9 @@ def main() -> None:
         "--layer",
         choices=list(LAYERS)
         + [
-            "building_footprints", "census_tracts", "acs_commute_density",
-            "acs_income_distribution", "kauai_bus_major_stops", "kauai_arterial_roads", "all",
+            "building_footprints", "census_tracts", "census_places", "acs_commute_density",
+            "acs_income_distribution", "zillow_county_timeseries",
+            "kauai_bus_major_stops", "kauai_arterial_roads", "all",
         ],
         default="all",
         help="Which named layer to fetch (default: all)",
@@ -588,7 +673,19 @@ def main() -> None:
         count = fetch_hawaii_census_tracts(out_path)
         print(f"  {count} records -> {out_path}")
 
-    if args.layer not in ("building_footprints", "census_tracts"):
+    if args.layer in ("census_places", "all"):
+        out_path = RAW_DIR / "census_places.json"
+        print("Fetching census_places (TIGERweb CDPs, Hawaii)...")
+        count = fetch_hawaii_census_places(out_path)
+        print(f"  {count} records -> {out_path}")
+
+    if args.layer in ("zillow_county_timeseries", "all"):
+        out_path = RAW_DIR / "zillow_kauai_county_timeseries.csv"
+        print("Fetching zillow_county_timeseries for Kauai County...")
+        count = fetch_zillow_county_timeseries("Kauai County", out_path)
+        print(f"  {count} rows -> {out_path}")
+
+    if args.layer not in ("building_footprints", "census_tracts", "census_places", "zillow_county_timeseries"):
         targets = LAYERS if args.layer == "all" else {args.layer: LAYERS[args.layer]}
         for name, (base_url, layer_id, page_size) in targets.items():
             out_path = RAW_DIR / f"{name}.json"

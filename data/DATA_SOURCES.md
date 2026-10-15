@@ -136,6 +136,14 @@ A companion OPSD deliverable (https://files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDT
 - **Cross-check, not a coincidence:** the Challenge's own mandated $50,000 standardized development fee (`STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD`) sits almost exactly mid-range of this real fee stack.
 - **Caveat:** this breakdown is Honolulu-specific; no equivalent published Kauai County fee schedule was found broken out this way. Used as the best available statewide bound, not a Kauai-verified figure -- if a Kauai-specific fee schedule surfaces later, it should replace this.
 
+## Census Designated Places, Zillow time series, and new legislation (added 2026-10-15)
+
+**TIGERweb, Places_CouSub_ConCity_SubMCD/MapServer, layer 5 (Census Designated Places)** (via `fetch_data.py --layer census_places`) — 163 Hawaii CDP boundary records. Hawaii has no incorporated cities (layer 4, "Incorporated Places," returns empty for Hawaii) — the entire state outside county government is unincorporated, so CDPs are the only real place-name geography available. Used by `build_model.tract_to_place_crosswalk()` for a real land-area spatial join assigning each Kauai tract to its dominant CDP (24 real place names recovered: Lihu'e, Kapa'a, Koloa, Hanalei, Princeville, Kilauea, Kalaheo, Lawai, Poipu, Wailua Homesteads, etc.), used for the Existing Conditions and Scenario Explorer tract/place toggle. The Leaflet map stays at tract resolution regardless.
+
+**Zillow Research public CSVs, full monthly history** (`files.zillowstatic.com/research/public_csvs/{zori,zhvi}/County_*.csv`, via `fetch_data.py --layer zillow_county_timeseries`) — ZORI (rent index) back to 2015 and ZHVI (home value index) back to 2000, for Kauai County specifically, not just the latest published value. Feeds the new "Over time" Existing Conditions chart, paired with the real 2026 monthly sales trend already computed elsewhere in the pipeline (median $/sqft +29% Jan→Jun 2026, 225 real transactions).
+
+**2024 legislation, verified via legiscan.com** — Act 39/SB3202 (https://www.legiscan.com/HI/bill/SB3202/2024, statewide 2-ADU-per-lot mandate, signed May 28, 2024), HB2090 (https://www.legiscan.com/HI/bill/HB2090/2024, commercial-to-residential conversion), SB2066 (https://www.legiscan.com/HI/bill/SB2066/2024, approval exemptions), SB2133 (https://www.legiscan.com/HI/bill/SB2133/2024, HHFDC infrastructure bonds) — all confirmed signed the same day per bigislandvideonews.com's coverage of the signing (https://bigislandvideonews.com/2024/05/28/bills-signed-to-address-affordable-housing-crisis-in-hawai%CA%BBi). Added to the dashboard's new "Recent Hawaii housing legislation" section alongside the already-documented Act 159/HB1409 and SB1614 above.
+
 ## Supplementary national datasets (for baseline / economic context)
 
 - U.S. Census Bureau / ACS — demographic and housing stock context
