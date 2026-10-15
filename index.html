@@ -285,7 +285,7 @@
 <div class="toggle-row" id="top-tabs">
   <button data-tab="conditions" class="active">Existing Conditions</button>
   <button data-tab="scenario">Scenario Explorer</button>
-  <button data-tab="methodology">Methodology</button>
+  <button data-tab="methodology">Assumptions &amp; Methodology</button>
 </div>
 
 <div class="layout" id="scenario-tab" style="display:none;">
@@ -544,51 +544,277 @@
   <div class="conditions-sections">
 
     <p style="max-width:900px;font-size:13.5px;color:var(--muted);margin:0;">
-      This is a condensed, in-app version of the full methodology. The complete write-ups, with every
-      assumption's rationale and source, live in
+      Every number on this page's other two tabs comes from a formula below, not a guess — this page exists
+      so anyone can check the math. For each reform: what it does to the housing numbers, what assumptions
+      went in, where those assumptions came from, and the actual formula. The full narrative write-ups
+      (including every dead end and correction along the way) live in
       <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions Overview</a>,
       <a href="docs/DATA_PROVENANCE.md" target="_blank">Data Provenance</a>, and
-      <a href="docs/EXISTING_CONDITIONS.md" target="_blank">Existing Conditions</a> — this page links out
-      to them rather than restating them.
+      <a href="docs/EXISTING_CONDITIONS.md" target="_blank">Existing Conditions</a>.
     </p>
 
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
-        <h3>Baseline vs. policy intervention</h3>
-        <p>Every scenario in this tool answers one question: <mark>what does a reform add on top of
-        current law</mark>, not what a parcel's total theoretical capacity is. A reform's gross capacity
-        (every unit the new rule would legally allow) is always reported separately from what current
-        zoning already allows, so a scenario's "impact" number is the incremental capacity a reform
-        unlocks — never the reform's total capacity presented as if it were the delta.</p>
+        <h3>Baseline vs. policy intervention — the rule every reform below follows</h3>
+        <p>Every scenario answers one question: <mark>what does a reform add on top of current law</mark>,
+        not what a parcel's total theoretical capacity is. A parcel's current-code capacity (what it can
+        already legally hold today) is computed first and subtracted off; only the capacity a reform adds
+        <em>beyond</em> that baseline is ever reported as the reform's impact. This single rule is applied
+        identically in all four reforms below — it's why each one's formula includes an
+        <code>existing_units_estimate</code> or <code>baseline_capacity</code> subtraction term.</p>
       </div>
     </div>
 
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
-        <h3>Three gates, reported separately</h3>
-        <p>Each scenario (except Parking Reduction, which enables zero additional units directly — see
-        below) runs through three distinct, sequential gates, and the dashboard shows all three rather
-        than collapsing them into one number:</p>
-        <ol style="font-size:13.5px;line-height:1.6;">
-          <li><strong>Zoning capacity</strong> — how many units a parcel is legally allowed to hold under the reform, full stop.</li>
-          <li><strong>Feasibility-adjusted</strong> — of that capacity, how many units a developer's pro forma says are profitable to actually build at the tract's real comps-implied price, net of construction cost and the development fee.</li>
-          <li><strong>Affordability-constrained</strong> — of the feasible units, what share of a tract's own households (real ACS B19001 income brackets) could afford the resulting unit under standard mortgage underwriting (20% down, 30-year fixed, 7.000% — the median real rate quoted across eight Hawaii-market lenders by <a href="https://www.hicentral.com/hawaii-mortgage-rates.php" target="_blank">HiCentral</a>, confirmed 2026-10-15) or, for TOD's rental product, against the countywide Zillow ZORI rent.</li>
-        </ol>
-        <p>The headline finding from gate 3: <mark class="pink">0% of Kauai households clear the required-income bar in every tract</mark> for the ADU/Missing Middle for-sale product — the tracts where a project pencils out for a developer and the tracts where local households could afford to buy essentially don't overlap. Full derivation in <a href="docs/MODEL_AND_ASSUMPTIONS.md#affordability-constrained-demand--the-third-gate-distinct-from-feasibility-2026-10-15" target="_blank">Model &amp; Assumptions</a>.</p>
+        <h3>ADU (Accessory Dwelling Units)</h3>
+        <p><strong>What it does:</strong> models Act 39/SB3202's real, already-enacted mandate — at least 2
+        ADUs per residentially-zoned lot — against Kauai's actual current density code, to find which
+        parcels can legally add a second unit today.</p>
+        <p><strong>Assumptions:</strong> eligibility requires (1) a single-family-zoned (R-numbered) parcel,
+        (2) an existing residential unit on it, and (3) the district's real units/acre allowance covering
+        <code>existing_units_estimate + 1</code> on that parcel's actual area. No owner-occupancy
+        requirement is assumed (Kauai's code has none, confirmed directly against the ordinance text) and
+        no parking constraint gates eligibility (see Parking Requirement Reduction below for why).
+        <code>existing_units_estimate</code> assumes 1 unit per already-residential parcel — Kauai has no
+        direct unit-count field, so this is a stated simplification, not a measured count.</p>
+        <p><strong>Sources:</strong> Kauai County Code §8-4.2(b)/§8-4.6 (the real per-district units/acre
+        density rule, confirmed against the ordinance text, not inferred from zoning labels); Act 39 (2024)/SB3202
+        (see the Existing Conditions legislation section above).</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">eligible = zone_is_R_district AND has_existing_residential_unit
+           AND (max_units_by_density >= existing_units_estimate + 1)
+estimated_new_units_per_tract = count(eligible_parcels_in_tract) × absorption_rate</pre>
+        <p><strong>Impact on the numbers:</strong> 2,297 eligible parcels countywide → 144.7 raw estimated
+        units at the 6.3% absorption-rate default → <strong>108.2 feasibility-adjusted units</strong> (3 of
+        17 tracts fail feasibility entirely) → <strong>0 affordability-constrained units</strong> (every
+        Kauai household earns below the required income for the comps-implied price in every tract — see
+        the Affordability-Constrained Demand Gate below).</p>
       </div>
     </div>
 
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
-        <h3>Why Parking Requirement Reduction is different</h3>
-        <p>Parking reduction does not expand zoning capacity in this model — Kauai's ADU ordinance already
-        requires only one parking space either way, so removing the minimum doesn't change how many units
-        a parcel can legally hold. Its real, measurable effect is land freed (sqft) that a parking
-        requirement would otherwise consume, consistent with research (Sohoni &amp; Lee,
-        <a href="https://doi.org/10.1177/0739456X251343047" target="_blank">doi.org/10.1177/0739456X251343047</a>)
-        showing parking minimums have a comparatively small effect on unit yield versus other levers. The
-        chart for this scenario is intentionally a different metric (land, not units) and labeled
-        accordingly — it is not a smaller version of the other three scenarios' unit counts.</p>
+        <h3>Missing Middle (2–6 units)</h3>
+        <p><strong>What it does:</strong> models upzoning to the Challenge's own 2–6-unit benchmark ceiling,
+        but <em>only</em> on parcels current density code restricts to exactly their existing unit count
+        (the same single-family-restricted parcels the ADU scenario would otherwise also touch).</p>
+        <p><strong>Assumptions:</strong> a parcel the district's density math already lets build past its
+        current unit count (most larger R-6+ lots) is excluded — that's already-legal baseline capacity,
+        not a reform effect, and counting it here would double-count it as "impact." AG/O/C-N/C-G parcels
+        are excluded entirely (no units/acre figure exists to compute against). Not summed with the ADU
+        scenario for the same parcel, since both draw on the same underlying density allowance — a
+        combined number would need to take the max of the two, not their sum (not yet wired in).</p>
+        <p><strong>Sources:</strong> same density ordinance as ADU (Kauai County Code §8-4.2(b)/§8-4.6); the
+        2–6-unit/3-story ceiling is the Challenge benchmark's own stated definition of "Missing Middle," not
+        a Kauai-specific figure.</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">eligible = baseline_capacity == 0   (currently single-family-restricted in practice)
+additional_unit_capacity = max(0, 6 − existing_units_estimate)   [for eligible parcels only]
+additional_estimated_units_per_tract = sum(additional_unit_capacity_in_tract) × absorption_rate</pre>
+        <p><strong>Impact on the numbers:</strong> 4,163.8 raw estimated units countywide at the absorption-rate
+        default → <strong>2,937.6 feasibility-adjusted units</strong> (29% gated out by the same
+        per-tract feasible/infeasible pattern as ADU) → <strong>0 affordability-constrained units</strong>,
+        for the same reason as ADU: the for-sale product's comps-implied price clears no Kauai household's
+        real income in any tract.</p>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <h3>Transit-Oriented Density (TOD)</h3>
+        <p><strong>What it does:</strong> models the real, enacted floor-area-ratio (FAR) density standard
+        from HB1409 (2025)/Act 159, HRS §206E-246(j), applied to parcels near Kauai Bus's real transit
+        network — Kauai has no rail, so this models bus-corridor TOD, not a rail-station standard stretched
+        to fit.</p>
+        <p><strong>Assumptions:</strong> a "major transit stop" is a stop served by 2+ distinct weekday bus
+        routes (58 of 126 weekday-served stops qualify — more destinations reachable, overlapping headways,
+        the real distinction between a trunk/transfer stop and a single shuttle-loop stop). Eligibility
+        requires a parcel to fall within <strong>both</strong> a ¾-mile radius of a major stop <em>and</em>
+        a ¾-mile buffer of an HDOT-classified Principal or Minor Arterial corridor (Kuhio Hwy, Kaumualii
+        Hwy) — stop-proximity alone flagged ~40% of the county and wasn't a usable zoning standard on its
+        own. FAR defaults to the statute's base tier (4.0); a UI slider lets a user model the statute's
+        higher 6.0/7.0 half-mile/quarter-mile tiers directly, since whether a bus corridor (vs. a rail
+        station) can legally reach those tiers turns on an undefined statutory term ("locally preferred
+        alternative"). Unit size (840 GSF) reuses the Lihu'e lowrise product's real OPSD-sourced figure as
+        a stated stand-in — no Hawaii source for a TOD-specific unit size was found. Unlike ADU/Missing
+        Middle, non-R zones (AG/O/C-N/C-G) are NOT excluded — the statute applies "for all uses permitted
+        ... under underlying county zoning."</p>
+        <p><strong>Sources:</strong> HB1409 (2025)/Act 159, HRS §206E-246(j) (the enacted FAR tiers); Kauai
+        Bus GTFS feed (MobilityDatabase, NTD ID 90237) for stop/route data; HDOT HPMS Roads federal
+        functional classification for the arterial-corridor definition; OPSD's <em>Toward a
+        Transit-Oriented Development Housing Investment Strategy</em> (SCR162 report, Dec. 2023) for the
+        ¾-mile proximity standard, the one real Hawaii standard found that's explicitly mode-agnostic
+        (built for both rail and bus) rather than a rail standard applied to buses.</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">tod_eligible = within_¾mi_of_major_stop AND within_¾mi_of_arterial_corridor
+reform_capacity = floor(parcel_area_sqft × FAR / 840)      [FAR slider, default 4.0]
+additional_capacity = max(0, reform_capacity − existing_units_estimate)   [tod_eligible parcels only]
+additional_estimated_units_per_tract = sum(additional_capacity_in_tract) × absorption_rate</pre>
+        <p><strong>Impact on the numbers — an honest, unresolved finding:</strong> 13,004 of Kauai's ~25,000
+        parcels are TOD-eligible under this definition — <strong>267,734 pre-feasibility estimated units</strong>
+        at FAR 4.0, falling only to <strong>190,779 units</strong> after the feasibility gate. This is
+        implausible on its face (Kauai's entire 2023–2027 shortage is 4,914 units), and three different
+        real, independently-sourced Hawaii TOD density mechanisms have now been tried here, all producing an
+        implausible result applied blanket across this footprint. <mark class="pink">The dashboard shows this
+        deliberately unresolved</mark> (an adjustable FAR slider with an on-page warning) rather than picking
+        a fourth number and hoping it lands better — the real suspected problem is the eligibility
+        footprint's breadth (over half the county), not the density figure itself. At the affordability gate,
+        TOD's rental product fares better than ADU/MM's for-sale product (28–34% of households clear the rent
+        bar in most tracts, since $3,708/month is a far lower bar than a $1M+ sale price) — 190,779
+        feasibility-adjusted units falls to <strong>52,185 affordability-constrained units</strong>, a real
+        ~73% cut on top of the magnitude problem above.</p>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <h3>Parking Requirement Reduction</h3>
+        <p><strong>What it does to the housing numbers: nothing, directly.</strong> Parking does not gate
+        ADU eligibility on Kauai — a parcel either qualifies for a second unit under the density rule above
+        or it doesn't, and current code already requires only 1 off-street space per ADU either way. Removing
+        that requirement doesn't make any additional parcel eligible, so this scenario reports the <em>same
+        eligible-parcel count as the ADU scenario</em> (2,297), not a unit-count change. What actually changes
+        is land freed on each eligible parcel that the parking requirement would otherwise consume.</p>
+        <p><strong>Assumptions:</strong> 200 sqft/space (a standard surface-parking stall + maneuvering
+        allowance) — a planning-literature figure, not Kauai-specific, the same evidentiary status as other
+        inherited planning benchmarks in this model. This project deliberately does NOT apply a quantitative
+        post-reform parking-supply reduction ratio to Kauai: Sohoni &amp; Lee (2025) found parking reform's
+        effect ranges from minimal (Grand Rapids, Hartford) to large (Champaign, Somerville) depending on a
+        city's density and car-dependency — and <strong>Kauai's own real ACS figures (~5% non-car commute
+        share, ~675 people/sq mi) sit below even the study's "minimal effect" anchor cities on both axes</strong>,
+        meaning a numeric reduction ratio would be extrapolation past the regression's support, not
+        interpolation within it.</p>
+        <p><strong>Sources:</strong> Kauai County Code Chapter 8, Article 15/§8-1.4(i) (the real confirmed
+        1-space/ADU requirement); Sohoni &amp; Lee, "Parking the Minimum Parking Requirement: Evidence from
+        Nine U.S. Cities," <em>Journal of Planning Education and Research</em> 46(1), 2025
+        (<a href="https://doi.org/10.1177/0739456X251343047" target="_blank">doi.org/10.1177/0739456X251343047</a>)
+        — Table 3's real before/after parking-supply figures for 9 cities, used for the density/car-dependency
+        comparison, not for a reduction ratio applied to Kauai; ACS 2022 5-year commute/density data for
+        Kauai's own position on those same two axes.</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">eligible_parcels = (same set as the ADU scenario -- unchanged by this reform)
+parking_land_consumed_sqft_per_tract = count(eligible_parcels_in_tract) × 200</pre>
+        <p><strong>Impact on the numbers:</strong> 2,297 eligible parcels × 200 sqft/space =
+        <strong>459,400 sqft (10.5 acres) of parking land freed countywide</strong> if the requirement is
+        eliminated — real, but modest at the scale of the county's 4,914-unit shortage, and
+        <strong>zero additional units</strong> this model can attribute to the reform directly. This is why
+        the Scenario Explorer labels this chart "Land freed, sqft (NOT units)" rather than a units column.</p>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <h3>Development Fee Reduction &amp; the feasibility gate</h3>
+        <p><strong>What it does:</strong> answers whether a parcel's zoning capacity is actually profitable
+        to build, using a real Kauai-specific development pro forma — not just whether it's legal. This is
+        the gate that converts every reform's "zoning capacity" into its "feasibility-adjusted" number above.</p>
+        <p><strong>Assumptions:</strong> uses the "excess value" test (market value − total development cost
+        − required developer profit ≥ 0) from a real Kaua'i-specific pro forma (Lihu'e Town Core submarket),
+        not an invented cost structure. Land cost is allocated as $/building-GSF (the source table's land
+        price per sqft of residential building area), not a true site-area/FAR-based allocation — a stated
+        simplification, since no per-district FAR/land-value data exists for Kauai yet. Financing cost uses
+        an average-outstanding-balance approximation (loan amount × rate × term × 0.5, plus origination
+        fees), not a full monthly draw schedule. The reference sale price is scaled to each tract's own ACS
+        median home value (a linear heuristic: a tract twice as expensive as the county median is assumed to
+        sell new product at roughly twice the reference price) — cost inputs stay fixed at the Lihu'e
+        table's figures everywhere, since no tract-level cost data exists.</p>
+        <p><strong>Sources:</strong> State of Hawaii OPSD, "Financial Analysis of TOD Infrastructure Funding
+        and Financing Options" (HR&amp;A Advisors et al., 2023) — Real Estate Assumptions table, Lihu'e Town
+        Core (Kaua'i) column, sourced in the original to Group Pacific/PBR Hawai'i (hard costs), HR&amp;A
+        (soft costs, developer profit), CBRE (financing terms), and CoStar/Zillow (sale prices); the Challenge's
+        own mandated $50,000/unit standardized development fee; Honolulu DPP's Affordable Housing Requirement
+        Incentives handout (Feb. 2025) for the real $37,000–$74,000 fee-component stack bounding the slider's
+        range; ACS 2022 5-year median home value (B25077) for the tract-scaling denominator.</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">hard_cost = unit_size_gsf × hard_cost_per_gsf        ($420/GSF townhome, 1,500 GSF → $630,000)
+soft_cost = hard_cost × 0.15
+land_cost = unit_size_gsf × $36/building-GSF
+loan_amount = (hard_cost + soft_cost + land_cost) × 0.60   (60% loan-to-cost)
+financing_cost = loan_amount × 7.0% × 2yrs × 0.5 + loan_amount × 2.5% (fees)
+total_development_cost = hard + soft + land + financing + development_fee
+sale_price = reference_price × (tract_median_home_value / countywide_median_home_value)
+required_developer_profit = sale_price × 15%
+excess_value = sale_price − total_development_cost − required_developer_profit
+feasible = (excess_value ≥ 0)</pre>
+        <p><strong>Impact on the numbers:</strong> at the Challenge's $50,000 standardized fee, the Lihu'e
+        reference townhome's excess_value is positive countywide, but 3 of 17 tracts (the below-median-home-value
+        ones, where the scaled sale price can't clear this fixed cost structure) come back infeasible — the
+        source of ADU's 108.2→ the same 108.2 figure (no tracts newly flip) and Missing Middle's 29% cut. A
+        fee change (the fee-reduction slider) moves <code>excess_value</code> dollar-for-dollar: at the real
+        Honolulu-sourced $37,000–$74,000 fee-component range, the maximum possible swing is too small to flip
+        any of those 3 infeasible tracts to feasible — the "fee reduction alone won't close the gap" finding
+        documented in the Scenario Explorer's own fee-reduction note.</p>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <h3>Affordability-constrained demand gate</h3>
+        <p><strong>What it does:</strong> a demand-side question distinct from feasibility — of the
+        comps-implied price a feasible project would charge, what share of a tract's <em>own</em> households
+        could actually afford it? A tract can clear feasibility (a developer's return pencils at the going
+        price) while still being a market of a handful of local households who could ever pay that price —
+        this gate is how the dashboard catches that, rather than reporting feasibility alone as the finish
+        line.</p>
+        <p><strong>Assumptions:</strong> standard mortgage underwriting — 20% down, 30-year fixed, monthly
+        principal+interest capped at 30% of gross income (the HUD/Census "cost-burdened" standard, not a
+        project-invented threshold). Principal + interest ONLY — excludes property tax, homeowner's
+        insurance, and HOA/CPR fees (common on Kauai condo/CPR units), since no Hawaii-specific property-tax-rate
+        or insurance-cost source is in this project yet. This means required income is an UNDERSTATEMENT of
+        the true bar — the real qualifying percentage is at or below what this model computes, never above
+        it. Treats "% of tract households who could afford the unit" as a direct ceiling on units absorbed
+        in that tract specifically — a conservative, locally-grounded assumption that undercounts regional
+        demand (buyers from a wider commute-shed aren't counted), not a claim that every qualifying household
+        is in the market this year (that's what the separate absorption rate is for — the two stack
+        multiplicatively, not interchangeably).</p>
+        <p><strong>Sources:</strong> Census ACS 5-year detailed table B19001 (Household Income in the Past 12
+        Months), tract-level, 16 real income brackets — not a tract median used as a stand-in; HiCentral
+        (Honolulu Board of REALTORS) real mortgage rate quotes
+        (<a href="https://www.hicentral.com/hawaii-mortgage-rates.php" target="_blank">hicentral.com/hawaii-mortgage-rates.php</a>,
+        confirmed 2026-10-15) — median of 8 Hawaii-market lenders' 30-yr fixed rate, 7.000%, excluding one
+        non-Hawaii-market outlier; the countywide Zillow ZORI rent figure for TOD's rental product (no
+        tract-level rent signal exists for Kauai).</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">loan_amount = sale_price × (1 − 20%)
+monthly_rate = 7.000% / 12;  n = 360 months
+monthly_PI = loan_amount × [monthly_rate × (1+monthly_rate)^n] / [(1+monthly_rate)^n − 1]
+required_income = (monthly_PI × 12) / 30%
+pct_households_affording = share of the tract's real B19001 brackets with income ≥ required_income
+                            (linear interpolation within whichever bracket the threshold falls inside)
+affordability_adjusted_units = feasibility_adjusted_units × (pct_households_affording / 100)</pre>
+        <p><strong>Impact on the numbers — the headline finding:</strong> <mark class="pink">0% of Kauai
+        households clear the required-income bar in every single tract</mark> for the ADU/Missing Middle
+        for-sale product — 108.2 feasibility-adjusted ADU units and 2,937.6 Missing Middle units both
+        collapse to 0 affordability-constrained units countywide. The tracts where a project is feasible to
+        build (high enough comps to cover cost + profit) are disproportionately Kauai's expensive tracts
+        (Princeville/Hanalei North Shore) — $1.9M+ required sale prices, $400K+ required household income,
+        which essentially no Kauai household has; the lower-priced tracts fail feasibility in the first
+        place. There is essentially no overlap between "a developer could profitably build this" and "a
+        Kauai household could afford to buy it," as currently modeled. The Existing Conditions "Household
+        income & the affordability gap" chart is this same math run in the other direction, against the
+        real sales comps directly.</p>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <h3>Absorption rate — how much of a reform's capacity actually gets built</h3>
+        <p><strong>What it does:</strong> every reform's zoning capacity is scaled by this single rate before
+        feasibility/affordability are even applied — it's the model's stand-in for "not every legally
+        eligible parcel redevelops in a given decade."</p>
+        <p><strong>Assumptions:</strong> Kauai's default is <strong>6.3%</strong> (not a round guess) —
+        derived from each area's average annual permit count as a share of its housing stock, scaled to a
+        10-year horizon. This is NOT the same quantity a prior build's 8% assumption approximated (no
+        historical eligible-<em>parcel</em> baseline exists for Hawaii either); it's the best available
+        empirical proxy, not a measured redevelopment rate for ADU/Missing-Middle-eligible parcels
+        specifically. Exposed as a UI slider so this uncertainty is adjustable, not hidden behind a fixed
+        number.</p>
+        <p><strong>Sources:</strong> FRED Building Permits Survey (series BPPRIV015001/3/7/9, HIBPPRIV) ×
+        Hawaii DBEDT 2023 housing-unit estimates (CO-EST2023-HU-15) — full figures in
+        <code>data/reference/absorption_rate_benchmarks.csv</code>.</p>
+        <p><strong>Formula:</strong></p>
+        <pre style="background:#fff;border:1.5px solid var(--ink);border-radius:4px;padding:10px 12px;font-size:12px;overflow-x:auto;">absorption_rate = (avg_annual_building_permits / existing_housing_stock) × 10 years</pre>
       </div>
     </div>
 
@@ -617,6 +843,8 @@
           <li>Feasibility's revenue side scales comps-implied price one-sidedly; it is a stated simplification, not a full market-clearing model.</li>
           <li>Zillow publishes no ZIP-level rent data for Kauai — only one countywide ZORI figure exists, so the rent chart necessarily mixes tract-level ACS medians with a single countywide line.</li>
           <li>The "over time" sales trend is 17 real months (Feb 2025–Jun 2026) — real transactions, but still shorter than ZORI's own 2015+ history.</li>
+          <li>The TOD scenario's eligibility footprint (over half the county) produces an implausible unit count at every density mechanism tried so far — presented deliberately unresolved, not papered over.</li>
+          <li>The 6.3% absorption rate is a statewide permit-to-stock proxy, not a measured redevelopment rate for reform-eligible parcels specifically.</li>
         </ul>
         <p>Full detail: <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions Overview</a> §Limitations and Known Edge Cases.</p>
       </div>
