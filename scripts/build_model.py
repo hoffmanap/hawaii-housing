@@ -1095,6 +1095,28 @@ def kauai_development_fee_reduction_feasibility(
 # API, 2026-10-14.
 KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD = 742_900
 
+# Zillow Observed Rent Index (ZORI), Kauai County, Aug 2026 -- county-level
+# is the finest granularity Zillow publishes a Kauai rent figure at.
+# Checked ZIP-level coverage first (files.zillowstatic.com/research/
+# public_csvs/zori/Zip_zori_uc_sfrcondomfr_sm_month.csv): ZERO Kauai zip
+# codes appear -- the rental market there is too thin for Zillow to
+# publish a reliable index at that granularity. County-level (`County_
+# zori_uc_sfrcondomfr_sm_month.csv`) does have a "Kauai County" row.
+# Decision, 2026-10-15: use this single county-wide figure, same role as
+# KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD above, rather than switching to a
+# paid provider (e.g. Rentcast) for finer granularity -- a different
+# vendor re-slicing the same small set of actual Kauai rental listings
+# doesn't manufacture real tract-level signal, it just adds an unverified,
+# paid dependency for a market too thin to support that granularity either
+# way. NOT YET WIRED INTO A SCENARIO: this is the market-rent input a real
+# multifamily RENTAL pro forma (rent -> NOI -> supportable value at a cap
+# rate, vs. mid-rise construction cost) would need to properly feasibility-
+# test the TOD scenario's higher-density parcels, which the current
+# feasibility gate still can't do (it prices a townhome-RESALE product --
+# see the Transit-Oriented Density section of MODEL_AND_ASSUMPTIONS.md).
+# Building that rental pro forma is the next real step, not yet done.
+KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH = 3_708  # Aug 2026, latest available
+
 
 def tract_scaled_development_fee_reduction_feasibility(
     acs_commute_density_csv: Path | None = None,
@@ -1153,6 +1175,82 @@ def tract_scaled_development_fee_reduction_feasibility(
                 "GEOID": str(tract["GEOID"]),
                 "median_home_value_usd": tract["median_home_value_usd"],
                 "home_value_scale_vs_countywide": round(scale, 3),
+                "scaled_sale_price_usd": round(scaled_sale_price),
+                "excess_value_usd": result["excess_value_usd"],
+                "feasible": result["feasible"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def tract_comps_development_fee_reduction_feasibility(
+    sales_joined_csv: Path | None = None,
+    typology: str = "townhome_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+    min_sales_per_tract: int = 5,
+) -> pd.DataFrame:
+    """
+    Same mechanism as tract_scaled_development_fee_reduction_feasibility(),
+    but scales the Lihu'e reference sale price by REAL observed 2026
+    transaction $/building-sqft per tract (user-supplied monthly county
+    sales exports, Jan-Jun 2026, processed by scripts/
+    process_sales_exports.py -- see that script's docstring for the
+    county-doesn't-self-serve-bulk-exports caveat and the TMK join-key
+    reverse-engineering), instead of the ACS median-home-value RATIO used
+    in the other version. This replaces a Census proxy with an actual
+    revenue figure for 16 of Kauai's 17 tracts (min_sales_per_tract=5
+    excludes any tract without enough 2026 sales to trust a median).
+
+    Sanity check against the existing pro forma: the countywide median
+    across all 225 usable 2026 residential sales was $779/building-sqft --
+    within 1% of the Lihu'e reference townhome's own implied $786/sqft
+    ($1,179,403 / 1,500 sqft), which is reassuring cross-validation of the
+    OPSD-sourced figure, not a coincidence manufactured by this function.
+
+    Still scales REVENUE only, same stated asymmetry as the ACS version --
+    no tract-level land-cost or hard-cost source exists yet, so cost
+    inputs stay fixed at the Lihu'e table's figures everywhere.
+    """
+    path = sales_joined_csv or (OUT_DIR / "kauai_sales_2026_joined.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `scripts/process_sales_exports.py` first "
+            "(needs monthly sales exports in data/raw/sales_exports/, which the user supplies "
+            "manually -- no bulk self-service export exists on the county's site)."
+        )
+    sales = pd.read_csv(path, dtype={"GEOID": str})
+    cfg = COUNTY_CONFIG["kauai"]
+    usable = sales[
+        (sales["building_sqft"] > 0)
+        & sales["price_per_sqft"].notna()
+        & sales["taxclass"].isin(cfg["existing_residential_taxclasses"])
+        & sales["GEOID"].notna()
+    ]
+    by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
+    by_tract = by_tract[by_tract["count"] >= min_sales_per_tract]
+
+    base_inputs = KAUAI_LIHUE_PRO_FORMA_INPUTS[typology]
+    reference_sale_price = base_inputs["sale_price_per_unit_usd"][affordability]
+    reference_price_per_sqft = reference_sale_price / base_inputs["unit_size_gsf"]
+
+    rows = []
+    for geoid, row in by_tract.iterrows():
+        scale = row["median"] / reference_price_per_sqft
+        scaled_sale_price = reference_sale_price * scale
+        original = KAUAI_LIHUE_PRO_FORMA_INPUTS[typology]
+        scaled_inputs = dict(original)
+        scaled_inputs["sale_price_per_unit_usd"] = {affordability: scaled_sale_price}
+        KAUAI_LIHUE_PRO_FORMA_INPUTS[typology] = scaled_inputs
+        try:
+            result = kauai_development_fee_reduction_feasibility(typology, affordability, development_fee_usd)
+        finally:
+            KAUAI_LIHUE_PRO_FORMA_INPUTS[typology] = original
+        rows.append(
+            {
+                "GEOID": geoid,
+                "comps_median_price_per_sqft": round(row["median"], 2),
+                "comps_sale_count": int(row["count"]),
                 "scaled_sale_price_usd": round(scaled_sale_price),
                 "excess_value_usd": result["excess_value_usd"],
                 "feasible": result["feasible"],

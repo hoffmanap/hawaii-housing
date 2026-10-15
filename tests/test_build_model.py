@@ -282,3 +282,17 @@ def test_tod_eligibility_requires_both_stop_and_corridor_proximity():
     near_corridor = pd.Series([True, False, True, False])
     tod_eligible = near_stop & near_corridor
     assert list(tod_eligible) == [True, False, False, False]
+
+
+def test_tract_comps_feasibility_requires_sales_file():
+    """
+    Real sales comps aren't fetched automatically (no bulk self-service
+    export exists on the county's site -- the user supplies monthly
+    exports manually), so this must fail loudly, not silently fall back
+    to a guess, when the processed file isn't present.
+    """
+
+    with pytest.raises(RuntimeError):
+        build_model.tract_comps_development_fee_reduction_feasibility(
+            sales_joined_csv=Path("/nonexistent/kauai_sales_2026_joined.csv")
+        )
