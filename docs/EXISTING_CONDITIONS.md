@@ -10,7 +10,7 @@ Zillow's Observed Rent Index (ZORI) has **zero ZIP-code-level coverage for Kauai
 
 Two sources, deliberately kept separate rather than blended into one number:
 
-- **Real 2026 transactions**: Kauai County Real Property Tax Office monthly sales exports, Jan–Jun 2026, 362 raw records, 225 usable residential sales after filtering to tax classes with recorded building square footage. **Countywide median: $779/building-sqft.** 16 of 17 Kauai tracts have 5+ usable sales in just six months — better coverage than expected for a market this size.
+- **Real transactions, Feb 2025–Jun 2026**: Kauai County Real Property Tax Office monthly sales exports — extended from an original 6-month window to 17 months to match Zillow ZORI's own rent history — 1,116 raw records, 722 usable residential sales after filtering to tax classes with recorded building square footage. **Countywide median: $768/building-sqft.** All 17 of Kauai's 17 tracts now have 5+ usable sales.
 - **ACS median home value** (B25077, 2022 5-year): **countywide $742,900.** This is a stock measure (what owners report their home is worth) on a different vintage than the 2026 transactions, not a reconciled or averaged figure with the sales data above.
 
 Translated into whole-unit prices via this model's Lihu'e Town Core reference townhome product (1,500 GSF, a real OPSD-sourced pro forma input — see `docs/MODEL_AND_ASSUMPTIONS.md`), the real 2026 comps imply a **median tract-level for-sale price of roughly $1,274,000**, ranging from about $784,000 in the least expensive tract to about $1,871,000 in the most expensive (North Shore) tract.

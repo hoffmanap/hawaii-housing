@@ -1302,19 +1302,20 @@ def tract_comps_development_fee_reduction_feasibility(
 ) -> pd.DataFrame:
     """
     Same mechanism as tract_scaled_development_fee_reduction_feasibility(),
-    but scales the Lihu'e reference sale price by REAL observed 2026
+    but scales the Lihu'e reference sale price by REAL observed
     transaction $/building-sqft per tract (user-supplied monthly county
-    sales exports, Jan-Jun 2026, processed by scripts/
-    process_sales_exports.py -- see that script's docstring for the
-    county-doesn't-self-serve-bulk-exports caveat and the TMK join-key
+    sales exports, Feb 2025-Jun 2026 -- 17 months, extended from the
+    original 6 to match the Zillow ZORI rent series' own history -- processed
+    by scripts/process_sales_exports.py -- see that script's docstring for
+    the county-doesn't-self-serve-bulk-exports caveat and the TMK join-key
     reverse-engineering), instead of the ACS median-home-value RATIO used
     in the other version. This replaces a Census proxy with an actual
-    revenue figure for 16 of Kauai's 17 tracts (min_sales_per_tract=5
-    excludes any tract without enough 2026 sales to trust a median).
+    revenue figure for all 17 of Kauai's 17 tracts (min_sales_per_tract=5
+    excludes any tract without enough sales to trust a median).
 
     Sanity check against the existing pro forma: the countywide median
-    across all 225 usable 2026 residential sales was $779/building-sqft --
-    within 1% of the Lihu'e reference townhome's own implied $786/sqft
+    across all 722 usable residential sales was $768/building-sqft --
+    within 3% of the Lihu'e reference townhome's own implied $786/sqft
     ($1,179,403 / 1,500 sqft), which is reassuring cross-validation of the
     OPSD-sourced figure, not a coincidence manufactured by this function.
 
@@ -1424,6 +1425,27 @@ def _required_income_for_rent(monthly_rent_usd: float) -> float:
     return (monthly_rent_usd * 12) / AFFORDABILITY_INCOME_SHARE
 
 
+def _affordable_sale_price_for_income(annual_income_usd: float) -> float:
+    """
+    Inverse of _required_income_for_sale_price(): the maximum home price a
+    household earning annual_income_usd could afford, under the same
+    standard underwriting (20% down, 30-yr fixed at
+    HAWAII_MORTGAGE_RATE_30YR_FIXED, monthly P&I capped at
+    AFFORDABILITY_INCOME_SHARE of gross income). Same stated
+    simplification as the forward direction -- principal + interest only,
+    so this is an UPPER bound on what a household could truly afford once
+    property tax, insurance, and HOA/CPR fees are included.
+    """
+    annual_pi = annual_income_usd * AFFORDABILITY_INCOME_SHARE
+    monthly_pi = annual_pi / 12
+    monthly_rate = HAWAII_MORTGAGE_RATE_30YR_FIXED / 12
+    n_payments = HAWAII_MORTGAGE_TERM_YEARS * 12
+    loan_amount = monthly_pi * ((1 + monthly_rate) ** n_payments - 1) / (
+        monthly_rate * (1 + monthly_rate) ** n_payments
+    )
+    return loan_amount / (1 - HAWAII_MORTGAGE_DOWN_PAYMENT_PCT)
+
+
 def _pct_households_above_income(bracket_counts: dict, total_households: int, required_income: float) -> float:
     """
     Real percentage of a tract's households with income >= required_income,
@@ -1476,6 +1498,70 @@ ACS_B19001_BRACKETS_FOR_MODEL = [
     ("hh_income_150000_200000", 150_000, 200_000),
     ("hh_income_200000_plus", 200_000, None),
 ]
+
+
+def income_bracket_vs_affordable_stock_share(
+    income_csv: Path | None = None, sales_joined_csv: Path | None = None
+) -> pd.DataFrame:
+    """
+    Pairs, for each real ACS B19001 income bracket, the real share of
+    Kauai households in that bracket against the real share of Kauai's
+    own sales comps (the same usable set as
+    tract_comps_development_fee_reduction_feasibility(), Feb 2025-Jun
+    2026) priced at or below what a household earning that bracket's
+    representative income could afford, under this project's standard
+    underwriting (20% down, 30-yr fixed at HAWAII_MORTGAGE_RATE_30YR_FIXED,
+    30% of gross income -- the same math as tract_affordability_
+    constrained_capacity(), just run in the other direction). This is the
+    direct answer to "how much of what's actually selling could this
+    income band ever buy" -- household SHARE, not a raw count, intended
+    to sit next to the affordable-stock share as a clustered column chart.
+
+    The top, open-ended bracket ($200,000+) has no real upper bound; a
+    representative $250,000 is used as a stated, documented stand-in
+    (consistent with this project's other stated-simplification
+    choices), and is called out wherever this is surfaced.
+    """
+    income_path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
+    if not income_path.exists():
+        raise RuntimeError(
+            f"{income_path} not found -- run `fetch_data.py --layer acs_income_distribution` first"
+        )
+    income_df = pd.read_csv(income_path, dtype={"GEOID": str})
+
+    sales_path = sales_joined_csv or (OUT_DIR / "kauai_sales_2026_joined.csv")
+    if not sales_path.exists():
+        raise RuntimeError(f"{sales_path} not found -- run `scripts/process_sales_exports.py` first")
+    sales = pd.read_csv(sales_path, dtype={"GEOID": str})
+    cfg = COUNTY_CONFIG["kauai"]
+    usable_sales = sales[
+        (sales["building_sqft"] > 0)
+        & sales["price_per_sqft"].notna()
+        & sales["sale_price_usd"].notna()
+        & sales["taxclass"].isin(cfg["existing_residential_taxclasses"])
+    ]
+    total_sales = len(usable_sales)
+    bracket_cols = [c for c, _, _ in ACS_B19001_BRACKETS_FOR_MODEL]
+    total_households = income_df[bracket_cols].sum().sum()
+
+    rows = []
+    for col, lo, hi in ACS_B19001_BRACKETS_FOR_MODEL:
+        bracket_households = income_df[col].sum()
+        rep_income = hi if hi is not None else 250_000
+        affordable_price = _affordable_sale_price_for_income(rep_income)
+        n_affordable = int((usable_sales["sale_price_usd"] <= affordable_price).sum())
+        rows.append(
+            {
+                "bracket": col,
+                "income_lo": lo,
+                "income_hi": hi,
+                "representative_income_usd": rep_income,
+                "pct_households": round(100 * bracket_households / total_households, 2) if total_households else None,
+                "affordable_sale_price_usd": round(affordable_price),
+                "pct_sales_affordable": round(100 * n_affordable / total_sales, 2) if total_sales else None,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def tract_affordability_constrained_capacity(

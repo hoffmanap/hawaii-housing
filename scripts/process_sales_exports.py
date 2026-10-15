@@ -16,8 +16,10 @@ exports' 12-digit "Parcel ID" is Section(2) + Plat(3) + Parcel(3) +
 CPR/unit(4), with NO leading zone digit. build_model.py's parcel_level
 tmk_txt is Zone(1) + Section(2) + Plat(3) + Parcel(3), 9 digits, zone
 always "4" for Kauai. So tmk_txt[1:] (8 digits) == Parcel ID[:8] (8
-digits) is the real join key -- confirmed exact match on all 362 sales
-records across 6 months against data/processed/kauai_parcel_level.csv.
+digits) is the real join key -- confirmed exact match on all sales
+records against data/processed/kauai_parcel_level.csv, now spanning
+Feb 2025-Jun 2026 (17 months, pulled to match the Zillow ZORI rent
+series' own history on the Existing Conditions "over time" chart).
 This drops the CPR/condo-unit suffix, same granularity loss as
 parcel_level's own "one row per physical parcel" structure.
 
@@ -51,7 +53,7 @@ def _read_export(path: Path) -> pd.DataFrame:
 
 
 def load_kauai_sales() -> pd.DataFrame:
-    files = sorted(glob.glob(str(SALES_DIR / "kauai_sales_2026-*.xlsx")))
+    files = sorted(glob.glob(str(SALES_DIR / "kauai_sales_20*.xlsx")))
     if not files:
         raise RuntimeError(
             f"No Kauai sales exports found in {SALES_DIR} -- these are manually pulled from "
@@ -95,7 +97,7 @@ def summarize(joined: pd.DataFrame) -> None:
         & (joined["taxclass"].isin(bm.COUNTY_CONFIG["kauai"]["existing_residential_taxclasses"]))
     ]
     print(f"\n{len(joined)} total sales records, {len(valid)} usable residential land+building sales "
-          f"with building sqft (Jan-Jun 2026)")
+          f"with building sqft (Feb 2025-Jun 2026)")
     print(f"Median $/building sqft, all usable sales: ${valid['price_per_sqft'].median():,.0f}")
     print("\nBy zoning district (n >= 5):")
     by_zone = valid.groupby("zoning")["price_per_sqft"].agg(["median", "count"])
@@ -103,7 +105,7 @@ def summarize(joined: pd.DataFrame) -> None:
     print("\nBy tract (n >= 5) -- this is the granularity the feasibility pro forma would need:")
     by_tract = valid.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
     qualifying = by_tract[by_tract["count"] >= 5]
-    print(qualifying if len(qualifying) else "  none -- no tract has 5+ usable sales in 6 months")
+    print(qualifying if len(qualifying) else "  none -- no tract has 5+ usable sales over the full window")
     print(f"\n{len(by_tract)} of 17 tracts have ANY usable sale; "
           f"max per tract: {by_tract['count'].max() if len(by_tract) else 0}")
 

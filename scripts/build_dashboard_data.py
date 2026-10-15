@@ -52,8 +52,9 @@ def _zillow_timeseries_for_metadata() -> dict:
 def _sales_monthly_trend_for_metadata() -> list:
     """
     Real month-by-month median $/building-sqft from the user-supplied
-    Kauai sales exports (Jan-Jun 2026) -- only six months, but real
-    transactions, not interpolated -- same "data over time" request.
+    Kauai sales exports (Feb 2025-Jun 2026, 17 months -- pulled to match
+    the Zillow ZORI rent series' own history) -- real transactions, not
+    interpolated.
     """
     path = Path(__file__).parent.parent / "data" / "processed" / "kauai_sales_2026_joined.csv"
     if not path.exists():
@@ -71,6 +72,22 @@ def _sales_monthly_trend_for_metadata() -> list:
         {"month": r["month"], "median_price_per_sqft": round(r["median"], 2), "sales_count": int(r["count"])}
         for _, r in by_month.iterrows()
     ]
+
+
+def _income_vs_affordable_stock_for_metadata() -> list:
+    """
+    Wraps bm.income_bracket_vs_affordable_stock_share(): for each real ACS
+    B19001 income bracket, the real household share in that bracket next
+    to the real share of Kauai's own sales comps priced at or below what
+    that bracket's representative income could afford. Feeds the
+    Existing Conditions "Household income & the affordability gap"
+    clustered-column chart.
+    """
+    try:
+        df = bm.income_bracket_vs_affordable_stock_share()
+    except RuntimeError:
+        return []
+    return df.to_dict("records")
 
 
 def main() -> None:
@@ -265,15 +282,16 @@ def main() -> None:
                     "countywide_zori_usd_per_month": bm.KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH,
                     "zillow_timeseries": _zillow_timeseries_for_metadata(),
                     "sales_monthly_trend": _sales_monthly_trend_for_metadata(),
+                    "income_vs_affordable_stock": _income_vs_affordable_stock_for_metadata(),
                     "countywide_median_home_value_usd": bm.KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD,
                     "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
                     "countywide_sales_count_2026": countywide_sales_count,
                     "existing_conditions_note": (
-                        "Baseline context, not a policy scenario: real 2026 county sales comps "
-                        "(Jan-Jun, user-supplied monthly exports), Zillow's county-level rent index "
-                        "(ZORI, zip-level coverage is zero for Kauai -- the rental market is too "
-                        "thin), ACS 2022 5-year median home value/rent and household-income "
-                        "brackets (B19001). See docs/EXISTING_CONDITIONS.md."
+                        "Baseline context, not a policy scenario: real county sales comps "
+                        "(Feb 2025-Jun 2026, user-supplied monthly exports), Zillow's county-level "
+                        "rent index (ZORI, zip-level coverage is zero for Kauai -- the rental "
+                        "market is too thin), ACS 2022 5-year median home value/rent and "
+                        "household-income brackets (B19001). See docs/EXISTING_CONDITIONS.md."
                     ),
                     "development_fee_default_usd": bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
                     "development_fee_slider_min_usd": bm.DEVELOPMENT_FEE_SLIDER_MIN_USD,
