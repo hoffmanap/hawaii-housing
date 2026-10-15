@@ -1,45 +1,64 @@
-# Existing Conditions — Kauai County, as of 2026-10-15
+# Existing Conditions — Kauai and Honolulu Counties, as of 2026-10-15
 
-This is the baseline picture every scenario in this tool is measured against: what Kauai's housing market actually looks like right now, before any zoning reform. It's not a required Challenge deliverable on its own, but it's the context a reviewer needs before any of the scenario numbers in `docs/POLICY_SCENARIO_COMPARISON.md` or the dashboard mean anything. Every figure here is also rendered live in `index.html`'s "Existing Conditions" tab, generated from the same pipeline (`scripts/build_dashboard_data.py`), not hand-copied — the two should never drift apart. Full source-by-source citations are in `data/DATA_SOURCES.md` and the inventory table in `docs/DATA_PROVENANCE.md`.
+This is the baseline picture every scenario in this tool is measured against: what each county's housing market actually looks like right now, before any zoning reform. It's not a required Challenge deliverable on its own, but it's the context a reviewer needs before any of the scenario numbers in `docs/POLICY_SCENARIO_COMPARISON.md` or the dashboard mean anything. Kauai and Honolulu are both built out below; Hawai'i County and Maui are not yet (see "What this baseline does and doesn't tell you"). The two counties' figures are **not yet wired into the dashboard as a combined, county-as-a-dimension view** — that chart redesign is still open; this document reports the real numbers behind it so they exist somewhere citable in the meantime. Full source-by-source citations are in `data/DATA_SOURCES.md` and the inventory table in `docs/DATA_PROVENANCE.md`.
 
 ## Market rents
 
-Zillow's Observed Rent Index (ZORI) has **zero ZIP-code-level coverage for Kauai** — the rental market is too thin for Zillow to publish a reliable index below the county level. The only figure available is **countywide: $3,708/month (Aug 2026, latest published)**. ACS also publishes a tract-level "median gross rent" (B25064, 2022 5-year) that is populated for some but not all tracts, shown in the dashboard table alongside the single countywide ZORI figure — the two are not the same vintage or methodology and shouldn't be read as cross-validating each other, just as the two best available rent signals.
+| | Kauai | Honolulu |
+|---|---|---|
+| Zillow ZORI (countywide, latest) | $3,708/mo (Aug 2026) | $3,020/mo (Aug 2026) |
+| ACS median gross rent (B25064, tract) | populated for some tracts | tract median of medians: $2,071/mo |
+
+Zillow's Observed Rent Index has **zero ZIP-code-level coverage for Kauai** — the market there is too thin for a reliable sub-county index. Honolulu has full ZIP coverage in principle, but this project has only pulled the **countywide** ZORI series so far (to match the sales/ACS geography used everywhere else here), not the ZIP-level series — a real option for a future pass, not yet done. The ACS and ZORI figures are different vintages and methodologies for both counties and shouldn't be read as cross-validating each other.
 
 ## Sales / home values
 
-Two sources, deliberately kept separate rather than blended into one number:
+| | Kauai | Honolulu |
+|---|---|---|
+| Real transactions window | Feb 2025–Jun 2026 (17 mo) | Feb 2025–Sep 2026 (20 mo, partial) |
+| Raw sales records | 1,116 | 9,157 |
+| Usable residential sales (valid, with building sqft) | 722 | 7,127 |
+| Countywide median $/building-sqft | $768 | $648 |
+| Tracts with 5+ usable sales | 17 of 17 | 256 of 285 matched |
+| ACS median home value (B25077, 2022 5-yr) | $742,900 | tract median of medians: $809,550 |
 
-- **Real transactions, Feb 2025–Jun 2026**: Kauai County Real Property Tax Office monthly sales exports — extended from an original 6-month window to 17 months to match Zillow ZORI's own rent history — 1,116 raw records, 722 usable residential sales after filtering to tax classes with recorded building square footage. **Countywide median: $768/building-sqft.** All 17 of Kauai's 17 tracts now have 5+ usable sales.
-- **ACS median home value** (B25077, 2022 5-year): **countywide $742,900.** This is a stock measure (what owners report their home is worth) on a different vintage than the 2026 transactions, not a reconciled or averaged figure with the sales data above.
+Honolulu's sales export uses a different schema than Kauai's (`Parcel  Class` as a direct "RESIDENTIAL" filter rather than an enumerated taxclass set, separate `Bldg. SF`/`Land SF` columns) and a different parcel-ID join key (12-digit Parcel ID, first 8 digits = the TMK used in `parcels_oahu.json` — confirmed exact match on a full test month before trusting it on all 21 files). See `scripts/process_honolulu_sales_exports.py`.
 
-Translated into whole-unit prices via this model's Lihu'e Town Core reference townhome product (1,500 GSF, a real OPSD-sourced pro forma input — see `docs/MODEL_AND_ASSUMPTIONS.md`), the real 2026 comps imply a **median tract-level for-sale price of roughly $1,274,000**, ranging from about $784,000 in the least expensive tract to about $1,871,000 in the most expensive (North Shore) tract.
+Kauai's comps are translated into whole-unit for-sale prices via a real OPSD-sourced reference townhome product (see `docs/MODEL_AND_ASSUMPTIONS.md`) — **no equivalent translation exists yet for Honolulu**; no Honolulu-specific pro forma/reference unit has been sourced (a contractor blog was checked 2026-10-15 and rejected for lack of verifiable figures — see `data/reference/`). Honolulu's $648/sqft median is therefore reported as a per-sqft figure only, not yet converted into a feasibility-gate input.
 
 ## Household income distribution
 
-Pulled as the real ACS B19001 bracket distribution (2022 5-year), not a tract median — 17 Kauai tracts, 22,978 total households. Countywide shape:
+Pulled as the real ACS B19001 bracket distribution (2022 5-year), not a tract median.
 
-| Income bracket | Share of households |
-|---|---|
-| Under $25,000 | 11.7% |
-| $25,000–$50,000 | 13.9% |
-| $50,000–$75,000 | 16.9% |
-| $75,000–$100,000 | 12.5% |
-| $100,000–$150,000 | 20.6% |
-| $150,000+ | 24.2% |
+| Income bracket | Kauai (17 tracts, 22,978 HH) | Honolulu (321 tracts, 333,700 HH) |
+|---|---|---|
+| Under $25,000 | 11.7% | 10.6% |
+| $25,000–$50,000 | 13.9% | 13.0% |
+| $50,000–$75,000 | 16.9% | 13.5% |
+| $75,000–$100,000 | 12.5% | 13.0% |
+| $100,000–$150,000 | 20.6% | 20.2% |
+| $150,000+ | 24.2% | 29.7% |
 
-Interpolating within the bracket that contains the midpoint household puts **countywide median household income at roughly $85,000–$90,000** — this is an estimate from the bracket distribution above, not a separately-fetched Census median (B19013), and is given as an order-of-magnitude figure, not a precise one.
+Interpolating within the bracket containing the midpoint household: Kauai's countywide median is roughly **$85,000–$90,000**; Honolulu's is roughly **$95,000–$100,000** — both order-of-magnitude estimates from the bracket distribution, not a separately-fetched Census median (B19013).
 
 ## The affordability gap, stated plainly
 
-This is the single most important fact in this baseline, and it's why the Affordability-Constrained gate exists at all: a household earning the countywide median (~$85,000–$90,000) is nowhere close to the ~$270,000/year required to afford the median tract's for-sale comps price under standard mortgage underwriting (see `docs/MODEL_AND_ASSUMPTIONS.md`'s Affordability-Constrained Demand section). Even Kauai's *least* expensive comps tract requires roughly double the countywide median household income. This gap exists in the data independent of any policy scenario — it describes Kauai today, not a projection.
+This is the single most important fact in both counties' baselines, and it's why the Affordability-Constrained gate exists at all: Kauai's median household (~$85,000–$90,000) is nowhere close to the ~$270,000/year required to afford the median tract's for-sale comps price under standard mortgage underwriting (see `docs/MODEL_AND_ASSUMPTIONS.md`). Honolulu's own required-income figure has **not yet been computed** — that calculation depends on the same reference-unit translation flagged as missing above, so reporting a number here would mean inventing the pro forma input it requires. The gap plainly exists in Honolulu too (a $648/sqft median against a ~$95-100k median household income points the same direction as Kauai), but this project isn't going to state a specific required-income figure until there's a real Honolulu reference unit to compute it from.
 
 ## Commute mode and density
 
-ACS B08301 (commute mode) and B01003 (population), joined to tract land area: used originally to calibrate the Parking Requirement Reduction scenario's transferability check (Sohoni & Lee 2025's own two axes — non-car commute share and population density). Kauai's population-weighted figures (~5.4% non-car commute share, ~675 people/sq mi) sit well outside the dense-urban range that parking-reform research is normally calibrated against — a caveat carried through that scenario's own documentation, not resolved here.
+ACS B08301 (commute mode) and B01003 (population), joined to tract land area — originally pulled to calibrate the Parking Requirement Reduction scenario's transferability check (Sohoni & Lee 2025's own two axes: non-car commute share and population density).
+
+| | Kauai | Honolulu |
+|---|---|---|
+| Population-weighted density | ~675 people/sq mi | ~12,633 people/sq mi |
+| Commuter-weighted non-car-mode share | ~5.4% | ~15.2% |
+
+This is a real methodological improvement, not just a second data point: Kauai's figures sit well outside the dense-urban range parking-reform research is normally calibrated against (a caveat carried through that scenario's own documentation). Honolulu's density and non-car-commute share are far closer to the urban contexts that research actually studies — meaning a parking-reduction scenario built on Honolulu's real data would rest on a much more defensible transferability argument than Kauai's does. That scenario has not been built for Honolulu yet; this is a note for whoever builds it next, not a claim that it's already done.
 
 ## What this baseline does and doesn't tell you
 
-- It is tract-level where the underlying source supports it (ACS, real sales comps) and countywide where it doesn't (ZORI rent — the market is too thin for finer geography).
-- It mixes vintages on purpose rather than forcing a false reconciliation: 2022 ACS estimates, Aug 2026 Zillow data, and Jan–Jun 2026 real transactions are three different snapshots in time, shown as what they are.
-- It is Kauai-only. Honolulu, Hawaii County, and Maui have none of this baseline built out yet (see `docs/DATA_PROVENANCE.md`'s Known Limitations).
+- It is tract-level where the underlying source supports it (ACS, real sales comps) and countywide where it doesn't (ZORI rent for both counties, as pulled so far).
+- It mixes vintages on purpose rather than forcing a false reconciliation: 2022 ACS estimates, Aug 2026 Zillow data, and real transactions through 2026 are different snapshots in time, shown as what they are.
+- Kauai and Honolulu are built out; **Hawai'i County and Maui are not** (see `docs/DATA_PROVENANCE.md`'s Known Limitations).
+- Honolulu's numbers above are **not yet rendered in the dashboard** (`index.html`) or combined with Kauai's as a county dimension on the existing charts — that redesign is still open, per the earlier decision to combine rather than toggle between counties once a second county had data.
