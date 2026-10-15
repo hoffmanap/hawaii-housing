@@ -90,6 +90,62 @@ COUNTY_CONFIG = {
         # number against this range; there is no non-R fallback for ADUs
         # any more -- CN/CG/AG/O parcels are not ADU-eligible.
         "adu_eligible_rdistrict_ranges": ((1, 6), (10, 20)),
+        "use_rdistrict_density_rule": True,
+    },
+    "honolulu": {
+        "parcels_file": "parcels_oahu_augmented.json",  # see augment_oahu_parcels.py
+        "zoning_file": "zoning_honolulu.json",
+        "parcel_id_field": "tmk",
+        "zoning_field": "zone_class",
+        "taxclass_field": "taxclass",
+        "lot_area_field": "gisacres",
+        "existing_residential_taxclasses": {"RESIDENTIAL"},
+        # No owner-occupied/non-owner-occupied distinction exists in this
+        # proxy (buildingvalue > 0 only says "has an improvement", not who
+        # lives there) -- the owner-occupancy toggle has no effect here,
+        # same as any county without this key (see run_adu_scenario()'s
+        # owner_occupancy_warning).
+        "owner_occupied_taxclasses": None,
+        # Real unit count per TMK from legdat_honolulu.json (via
+        # augment_oahu_parcels.py), NOT the has-existing-residential ->
+        # assume-exactly-1-unit placeholder Kauai's parcel layer forces.
+        "existing_units_field": "existing_units",
+        # Honolulu's zone strings (R-5, R-3.5, Country, A-1, AMX-1, ...)
+        # are NOT a units-per-acre density rule like Kauai's -- Honolulu
+        # caps ADUs at exactly one per zoning lot regardless of lot size
+        # or density (ROH 21-5.50-3(a)(E)), so the R-number-as-density
+        # parser must be disabled for this county or it would wrongly
+        # read "R-5" as "5 units/acre".
+        "use_rdistrict_density_rule": False,
+        # CONFIRMED 2026-10-15 against ROH Table 21-5.1 (Table of Allowed
+        # Uses), per direct user-supplied ordinance excerpt: ADU is a
+        # permitted use (P*) only in these districts -- explicitly NOT
+        # permitted in AG-1/AG-2/P-2 (agricultural/preservation),
+        # A-1/A-2/A-3 (apartment), AMX/Resort, B-1/B-2/BMX (business), or
+        # I-1/I-2/I-3/IMX (industrial).
+        "adu_eligible_districts": {"Country", "R-20", "R-10", "R-7.5", "R-5", "R-3.5"},
+        # CONFIRMED 2026-10-15, ROH 21-5.50-3(a): no numeric minimum lot
+        # size stated for ADU eligibility (unlike Kauai, where no general
+        # ADU ordinance text exists below the R-district density rule) --
+        # 0 here means "don't gate on lot size", not "assumed small".
+        "adu_min_lot_sqft": 0,
+        # CONFIRMED 2026-10-15, ROH 21-5.50-3(a)(B): floor area capped at
+        # 500 sqft (lot < 4,999 sqft) or 1,000 sqft (lot >= 5,000 sqft).
+        # Not yet wired into a feasibility/pro-forma gate for Honolulu
+        # (no Honolulu-specific pro forma exists yet -- see
+        # docs/MODEL_AND_ASSUMPTIONS.md's Known Limitations) -- recorded
+        # here so that gate can read it once built, not silently ignored.
+        "adu_floor_area_cap_sqft": {(0, 4_999): 500, (5_000, float("inf")): 1_000},
+        # CONFIRMED 2026-10-15, ROH Table 21-6.1 / 21-6.30(b): +1
+        # off-street stall per ADU, waived within 0.5mi of a rail station,
+        # or within 800ft of a city bus stop inside the Primary Urban
+        # Center/Ewa development plan areas (and not already waived for
+        # an ohana unit on the same lot). NOT YET APPLIED as a gate --
+        # this project has not yet fetched HART rail-station or TheBus
+        # stop-location geometry to test parcels against these distances.
+        # require_parking=True currently still falls through to the
+        # generic "not yet implemented" warning in run_adu_scenario().
+        "adu_parking_added_stalls": 1,
     },
 }
 
@@ -126,12 +182,21 @@ def max_units_for_parcel(parcel_area_sqft: float, density_per_acre: float) -> in
 
 
 def is_adu_eligible_zone(zoning: str, cfg: dict) -> bool:
-    """Numeric-range check against single-family-zoned R-districts (see
-    adu_eligible_rdistrict_ranges above). ADUs are single-family-only per
-    Kauai County Code -- a non-R zone (AG, O, CN, CG, CON, ...) is never
-    eligible, full stop."""
+    """Two different real ordinance shapes, picked by which cfg key is
+    present -- never both:
+    - adu_eligible_districts (Honolulu): a flat set of district labels
+      confirmed directly against ROH Table 21-5.1, e.g. {"R-5", ...}.
+      Membership is a literal string match, not a numeric-range parse --
+      Honolulu's ADU cap is one-per-lot regardless of district number,
+      so there is no density math to recover from the label.
+    - adu_eligible_rdistrict_ranges (Kauai): numeric-range check against
+      single-family-zoned R-districts -- see that key's own comment.
+    A county config must set exactly one of these two keys."""
     if not isinstance(zoning, str):
         return False
+    districts = cfg.get("adu_eligible_districts")
+    if districts is not None:
+        return zoning in districts
     m = RDISTRICT_PATTERN.match(zoning)
     if not m:
         return False
@@ -284,21 +349,37 @@ def build_county(county: str) -> dict[str, Path]:
     )
 
     # Density-based max-unit rule (R-district number = units/acre) --
-    # None/NaN for non-R-numbered zones, where it doesn't apply.
-    parcels["density_per_acre"] = parcels[cfg["zoning_field"]].apply(max_density_units_per_acre)
-    parcels["max_units_by_density"] = parcels.apply(
-        lambda r: max_units_for_parcel(r["parcel_area_sqft"], r["density_per_acre"])
-        if pd.notna(r["density_per_acre"])
-        else pd.NA,
-        axis=1,
-    )
-    # Approximation, same status as Oahu's LEGDAT-based existing_units
-    # count elsewhere in this project: no direct existing-unit-count field
-    # exists on Kauai's parcel layer, so this assumes one existing
-    # dwelling per already-residential parcel. Will overcount available
-    # capacity on any parcel that's actually already multi-unit (e.g. an
-    # existing duplex on a R-6 lot) -- a real limitation, not yet solved.
-    parcels["existing_units_estimate"] = parcels["has_existing_residential"].astype(int)
+    # Kauai-only (see use_rdistrict_density_rule). Disabled per-county
+    # because some counties' district labels also happen to match the
+    # "R-<number>" pattern (Honolulu's R-5, R-3.5, ...) without that
+    # number meaning units/acre there -- applying Kauai's parser anyway
+    # would silently fabricate a density rule that doesn't exist in that
+    # county's actual code.
+    if cfg.get("use_rdistrict_density_rule", True):
+        parcels["density_per_acre"] = parcels[cfg["zoning_field"]].apply(max_density_units_per_acre)
+        parcels["max_units_by_density"] = parcels.apply(
+            lambda r: max_units_for_parcel(r["parcel_area_sqft"], r["density_per_acre"])
+            if pd.notna(r["density_per_acre"])
+            else pd.NA,
+            axis=1,
+        )
+    else:
+        parcels["density_per_acre"] = pd.NA
+        parcels["max_units_by_density"] = pd.NA
+
+    existing_units_field = cfg.get("existing_units_field")
+    if existing_units_field:
+        # Real per-parcel unit count (e.g. Honolulu's LEGDAT row count via
+        # augment_oahu_parcels.py), not an assumed flat 1.
+        parcels["existing_units_estimate"] = parcels[existing_units_field].fillna(0).astype(int)
+    else:
+        # Approximation: no direct existing-unit-count field exists on
+        # this county's parcel layer, so this assumes one existing
+        # dwelling per already-residential parcel. Will overcount
+        # available capacity on any parcel that's actually already
+        # multi-unit (e.g. an existing duplex) -- a real limitation, not
+        # yet solved for counties without their own unit-count source.
+        parcels["existing_units_estimate"] = parcels["has_existing_residential"].astype(int)
 
     parcel_cols = [
         pid, "GEOID", cfg["zoning_field"], "ludcode", cfg["taxclass_field"],
@@ -335,7 +416,7 @@ class ScenarioParams:
 
     def __init__(
         self,
-        min_lot_sqft: float = DEFAULT_ADU_MIN_LOT_SQFT,
+        min_lot_sqft: float | None = None,  # None -> county's own confirmed default
         absorption_rate: float | None = None,  # None -> county's own benchmark
         require_owner_occupancy: bool = False,
         require_parking: bool = False,
@@ -396,6 +477,16 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     )
 
     cfg = COUNTY_CONFIG[county]
+    # Each county's own confirmed default, not one figure applied
+    # everywhere: Kauai's 7,500 sqft is a common-threshold placeholder
+    # (see DEFAULT_ADU_MIN_LOT_SQFT), Honolulu's 0 is a CONFIRMED "no
+    # minimum stated" reading of ROH 21-5.50-3(a) -- using Kauai's number
+    # for Honolulu would fabricate a restriction that isn't in that code.
+    min_lot_sqft = (
+        params.min_lot_sqft
+        if params.min_lot_sqft is not None
+        else cfg.get("adu_min_lot_sqft", DEFAULT_ADU_MIN_LOT_SQFT)
+    )
     # Baseline eligibility: single-family-zoned (R-numbered) land only,
     # per current code -- is_adu_eligible_zone() has no non-R fallback.
     zone_ok = parcel_table["zoning"].apply(lambda z: is_adu_eligible_zone(z, cfg))
@@ -415,7 +506,7 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     density_ok = has_density_rule & (
         parcel_table["max_units_by_density"] >= parcel_table["existing_units_estimate"] + 1
     )
-    flat_lot_ok = ~has_density_rule & (parcel_table["parcel_area_sqft"] >= params.min_lot_sqft)
+    flat_lot_ok = ~has_density_rule & (parcel_table["parcel_area_sqft"] >= min_lot_sqft)
 
     eligible = zone_ok & parcel_table["has_existing_residential"] & (density_ok | flat_lot_ok)
     if params.require_owner_occupancy:
@@ -435,7 +526,7 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
 
     metadata = {
         "is_baseline": params.is_baseline,
-        "min_lot_sqft": params.min_lot_sqft,
+        "min_lot_sqft": min_lot_sqft,
         "absorption_rate": absorption_rate,
         "absorption_rate_was_county_benchmark": params.absorption_rate is None,
         "require_owner_occupancy": params.require_owner_occupancy,
@@ -1721,7 +1812,9 @@ def main() -> None:
     parser.add_argument(
         "--county", choices=list(COUNTY_CONFIG), default="kauai", help="Which county to build (default: kauai)"
     )
-    parser.add_argument("--min-lot-sqft", type=float, default=DEFAULT_ADU_MIN_LOT_SQFT)
+    parser.add_argument(
+        "--min-lot-sqft", type=float, default=None, help="Overrides the county's own confirmed default"
+    )
     parser.add_argument("--absorption-rate", type=float, default=None, help="Overrides the county benchmark")
     parser.add_argument("--require-owner-occupancy", action="store_true")
     parser.add_argument("--require-parking", action="store_true")
