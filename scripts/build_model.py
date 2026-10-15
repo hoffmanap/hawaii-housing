@@ -581,6 +581,176 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     return tract_rollup, metadata
 
 
+# Transit-Oriented Density -- "major transit stop" definition and proximity
+# threshold, per the Challenge benchmark's own requirement to define and
+# justify both.
+#
+# MAJOR TRANSIT STOP: Kauai has no rail or BRT. Per the user's explicit
+# correction (2026-10-14) to an earlier draft that scoped this scenario to
+# Honolulu's rail stations -- "there's nothing that says it has to be built
+# around transit stations. If the counties have rapid transit we could base
+# it around bus lines" -- this scenario is built on Kauai Bus's real,
+# actively-maintained GTFS feed (MobilityDatabase, NTD ID 90237; see
+# fetch_kauai_bus_major_stops() in fetch_data.py) instead. "Major" = served
+# by 2+ distinct routes on a weekday: Kauai Bus's network is a hub-and-spoke
+# of single-route shuttle loops feeding a handful of mainline/transfer
+# stops, so route-count is a clean, real, data-driven line between a
+# trunk/transfer stop (more destinations reachable, overlapping headways)
+# and a stop that's only ever served by one shuttle's own loop. 58 of 126
+# weekday-served stops qualify as of this feed.
+#
+# PROXIMITY THRESHOLD: half a mile, "about a ten-minute walk" -- the State
+# of Hawaii TOD Program's own station-area standard
+# (planning.hawaii.gov/lud/state-tod/), applied there to Honolulu's rail
+# stations but stated in mode-agnostic terms ("transit facility," not
+# "rail station"); this project extends it to bus stops on that same
+# reading, consistent with the Challenge's own "major transit stops"
+# language (also mode-agnostic).
+HALF_MILE_METERS = 804.672
+
+# REFORM DENSITY TARGET -- the one input here that is a genuine cross-
+# geography extrapolation, flagged explicitly rather than presented as a
+# Kauai-specific figure: ~50 units/gross acre is HHFDC/DAGS's adopted
+# Master Plan density target for Honolulu's Iwilei-Kapalama TOD Pilot Area
+# (OPSD TOD Infrastructure Finance Deliverable 1, Sec. on pilot-area master
+# planning; 552 acres, 700+ properties, 27,400-unit target). That is Oahu
+# rail-corridor redevelopment data, not a Kauai bus-corridor figure -- no
+# Kauai-specific or generic-Hawaii bus-TOD density standard was found in
+# the OPSD deliverables, the State TOD Program page, or elsewhere in this
+# project's research. Used here as the only real, cited Hawaii TOD density
+# figure available, with this caveat carried into every output that uses
+# it (metadata["density_target_caveat"] below) rather than silently
+# treating it as Kauai-appropriate.
+TOD_REFORM_DENSITY_UNITS_PER_ACRE = 50
+TOD_DENSITY_TARGET_CAVEAT = (
+    "~50 units/gross acre is Honolulu's Iwilei-Kapalama rail-TOD-pilot Master Plan target "
+    "(HHFDC/DAGS, OPSD TOD Infra Finance Deliverable 1), applied here to Kauai bus-corridor "
+    "parcels as the only real, cited Hawaii TOD density figure found -- not a Kauai-specific "
+    "or bus-corridor-specific standard. Treat the resulting capacity as an upper-bound "
+    "estimate, not a validated Kauai target."
+)
+
+
+def kauai_tod_eligible_parcels(major_stops_csv: Path | None = None) -> pd.DataFrame:
+    """
+    Buffers Kauai Bus's major stops (2+ weekday routes; see
+    fetch_kauai_bus_major_stops()) by the half-mile threshold above, and
+    flags every Kauai parcel whose centroid falls inside the buffer.
+    Returns one row per parcel (parcel_id_field, tod_eligible), meant to be
+    merged onto the parcel_level.csv table the same way build_county()'s
+    other per-parcel flags are.
+    """
+    stops_path = major_stops_csv or (RAW_DIR / "kauai_bus_major_stops.csv")
+    if not stops_path.exists():
+        raise RuntimeError(
+            f"{stops_path} not found -- run `fetch_data.py --layer kauai_bus_major_stops` first."
+        )
+    stops = pd.read_csv(stops_path)
+    major = stops[stops["is_major_stop"].astype(str) == "True"]
+    if major.empty:
+        raise RuntimeError(f"No major stops found in {stops_path}.")
+
+    cfg = COUNTY_CONFIG["kauai"]
+    pid = cfg["parcel_id_field"]
+    parcels = _load_geojson(RAW_DIR / cfg["parcels_file"]).to_crs(PROJECTED_CRS)
+    centroids = parcels[[pid, "geometry"]].copy()
+    centroids["geometry"] = centroids.geometry.centroid
+
+    stop_points = gpd.GeoDataFrame(
+        major, geometry=gpd.points_from_xy(major["stop_lon"], major["stop_lat"]), crs="EPSG:4326"
+    ).to_crs(PROJECTED_CRS)
+    station_area = stop_points.geometry.buffer(HALF_MILE_METERS).union_all()
+
+    centroids["tod_eligible"] = centroids.geometry.within(station_area)
+    return centroids[[pid, "tod_eligible"]]
+
+
+def run_tod_scenario(
+    county: str = "kauai", density_per_acre: float = TOD_REFORM_DENSITY_UNITS_PER_ACRE
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Transit-Oriented Density INTERVENTION: for parcels within the major-
+    transit-stop buffer (kauai_tod_eligible_parcels()), models the effect
+    of raising allowable density to density_per_acre -- i.e. the capacity
+    unlocked by MORE development rights near transit than current zoning
+    allows, which is what the Challenge benchmark actually asks for
+    ("model the effect of increasing allowable residential density near
+    major transit stops"). Per the same baseline/intervention principle
+    used everywhere else in this project: additional_estimated_units =
+    max(0, reform_capacity - existing_units_estimate), not reform_capacity
+    on its own, so this never reports a TOD-eligible parcel's full zoned
+    capacity as if it were the reform's incremental effect.
+
+    Parking: the benchmark lets teams "assume that parking requirements
+    are reduced or eliminated" for this scenario -- not modeled as a
+    separate constraint here since no parking-ratio ordinance data has
+    been sourced yet (same gap noted in run_adu_scenario()'s
+    parking_warning); this scenario's capacity number already assumes
+    parking isn't the binding constraint, consistent with that allowance.
+
+    Currently Kauai-only (the only county with a real transit GTFS feed
+    identified so far -- see docs/DATA_SOURCES.md).
+    """
+    if county != "kauai":
+        raise NotImplementedError(
+            f"run_tod_scenario only supports Kauai so far -- no transit stop data "
+            f"sourced yet for {county}."
+        )
+    cfg = COUNTY_CONFIG[county]
+    pid = cfg["parcel_id_field"]
+    parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
+    if not parcel_path.exists():
+        raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
+    parcel_table = pd.read_csv(parcel_path)
+
+    eligibility = kauai_tod_eligible_parcels()
+    parcel_table[pid] = parcel_table[pid].astype(str)
+    eligibility[pid] = eligibility[pid].astype(str)
+    parcel_table = parcel_table.merge(eligibility, on=pid, how="left")
+    parcel_table["tod_eligible"] = parcel_table["tod_eligible"].fillna(False)
+
+    reform_capacity = (
+        (parcel_table["parcel_area_sqft"] / 43_560) * density_per_acre
+    ).apply(math.floor)
+    additional_capacity = (reform_capacity - parcel_table["existing_units_estimate"]).clip(lower=0)
+    additional_capacity = additional_capacity.where(parcel_table["tod_eligible"], 0)
+
+    eligible_mask = (parcel_table["tod_eligible"]) & (additional_capacity > 0)
+    eligible = parcel_table[eligible_mask].copy()
+    eligible["additional_unit_capacity"] = additional_capacity[eligible_mask]
+
+    tract_rollup = (
+        eligible.groupby("GEOID", observed=True)
+        .agg(
+            eligible_parcel_count=(pid, "count"),
+            additional_gross_capacity=("additional_unit_capacity", "sum"),
+        )
+        .reset_index()
+    )
+    absorption_rate = absorption_rate_benchmark_for(county)
+    tract_rollup["additional_estimated_units"] = (
+        tract_rollup["additional_gross_capacity"] * absorption_rate
+    ).round(1)
+
+    out_path = OUT_DIR / f"{county}_tod_policy_impact_tract.csv"
+    tract_rollup.to_csv(out_path, index=False)
+    metadata = {
+        "is_baseline": False,
+        "major_transit_stop_definition": "Kauai Bus stop served by 2+ distinct weekday routes "
+        "(58 of 126 weekday-served stops, per the GTFS feed fetched 2026-10-14).",
+        "proximity_threshold": "Half-mile radius -- the State of Hawaii TOD Program's own "
+        "station-area standard, extended here from rail to bus stops.",
+        "density_per_acre": density_per_acre,
+        "density_target_caveat": TOD_DENSITY_TARGET_CAVEAT,
+        "absorption_rate": absorption_rate,
+        "parking_assumption": "Reduced/eliminated per the benchmark's own allowance for this "
+        "scenario -- not separately modeled as a constraint (no parking-ratio ordinance data "
+        "sourced yet).",
+        "total_tod_eligible_parcels": int(parcel_table["tod_eligible"].sum()),
+    }
+    return tract_rollup, metadata
+
+
 # Real, digitized figures from Sohoni & Lee, "Parking the Minimum Parking
 # Requirement: Evidence from Nine U.S. Cities," Journal of Planning
 # Education and Research 46(1), 2025 (user-supplied PDF, 2026-10-14) --

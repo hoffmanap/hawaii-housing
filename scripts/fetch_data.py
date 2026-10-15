@@ -192,6 +192,94 @@ def fetch_acs_commute_density(county: str, out_path: Path) -> int:
     return written
 
 
+KAUAI_BUS_GTFS_URL = (
+    "https://files.mobilitydatabase.org/ntd-90237/ntd-90237-202610120135/"
+    "ntd-90237-202610120135.zip"
+)
+
+
+def fetch_kauai_bus_major_stops(out_path: Path) -> int:
+    """
+    Downloads Kauai Bus's real GTFS feed (MobilityDatabase, NTD ID 90237;
+    daily-refreshed, zero validation errors as of 2026-10-14) and derives a
+    "major transit stop" list for the Transit-Oriented Density scenario --
+    directly answering the Challenge's "define major transit stops and
+    justify your transit proximity threshold" requirement with real
+    connectivity data instead of an assumption.
+
+    Definition used: a stop is "major" if 2+ distinct weekday routes serve
+    it. Rationale: Kauai Bus has no rail or BRT -- its route network is a
+    hub-and-spoke of shuttle loops feeding a handful of mainline/transfer
+    corridors (e.g. Kukui Grove - First Hawaiian Bank: 9 routes, 109 weekday
+    trips). A stop multiple routes converge on carries materially more
+    transit access (more destinations reachable, shorter effective wait via
+    overlapping headways) than a stop served by a single shuttle's own loop
+    -- the same distinction "major transit stop" standards elsewhere draw
+    between trunk/transfer stops and local coverage stops, but computed here
+    from this county's own real schedule data rather than borrowed from a
+    rail-specific threshold. As of this feed, 58 of 126 weekday-served stops
+    qualify; 68 are single-route stops.
+
+    This stop list, not a rail-station list, is what the TOD scenario
+    buffers around for Kauai -- see run_tod_scenario() in build_model.py and
+    the "Transit-Oriented Density" section of docs/MODEL_AND_ASSUMPTIONS.md
+    for why bus corridors, not just rail, count as "major transit stops"
+    here.
+    """
+    import io
+    import zipfile
+
+    req = urllib.request.Request(KAUAI_BUS_GTFS_URL, headers={"User-Agent": "hawaii-housing-model/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        content = resp.read()
+    zf = zipfile.ZipFile(io.BytesIO(content))
+
+    def read_csv_rows(name: str) -> list[dict]:
+        with zf.open(name) as fh:
+            return list(csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig")))
+
+    stops = {r["stop_id"]: r for r in read_csv_rows("stops.txt")}
+    calendar = read_csv_rows("calendar.txt")
+    weekday_service_ids = {
+        r["service_id"] for r in calendar
+        if r["monday"] == "1" and r["friday"] == "1"
+    }
+    trips = read_csv_rows("trips.txt")
+    weekday_trip_ids = {r["trip_id"] for r in trips if r["service_id"] in weekday_service_ids}
+    stop_times = read_csv_rows("stop_times.txt")
+    trip_route = {r["trip_id"]: r["route_id"] for r in trips}
+
+    routes_by_stop: dict[str, set] = {}
+    trips_by_stop: dict[str, int] = {}
+    for st in stop_times:
+        if st["trip_id"] not in weekday_trip_ids:
+            continue
+        sid = st["stop_id"]
+        routes_by_stop.setdefault(sid, set()).add(trip_route.get(st["trip_id"]))
+        trips_by_stop[sid] = trips_by_stop.get(sid, 0) + 1
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            ["stop_id", "stop_name", "stop_lat", "stop_lon", "weekday_trips", "n_routes", "is_major_stop"]
+        )
+        for stop_id, n_routes in sorted(routes_by_stop.items(), key=lambda kv: -trips_by_stop.get(kv[0], 0)):
+            stop = stops.get(stop_id)
+            if not stop or not stop.get("stop_lat") or not stop.get("stop_lon"):
+                continue
+            n = len(n_routes)
+            writer.writerow(
+                [
+                    stop_id, stop["stop_name"], stop["stop_lat"], stop["stop_lon"],
+                    trips_by_stop.get(stop_id, 0), n, n >= 2,
+                ]
+            )
+            written += 1
+    return written
+
+
 def fetch_hawaii_census_tracts(out_path: Path) -> int:
     params = {
         "where": "STATE='15'",
@@ -316,7 +404,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--layer",
-        choices=list(LAYERS) + ["building_footprints", "census_tracts", "acs_commute_density", "all"],
+        choices=list(LAYERS)
+        + ["building_footprints", "census_tracts", "acs_commute_density", "kauai_bus_major_stops", "all"],
         default="all",
         help="Which named layer to fetch (default: all)",
     )
@@ -333,6 +422,13 @@ def main() -> None:
         print(f"Fetching acs_commute_density for {args.county} (Census API)...")
         count = fetch_acs_commute_density(args.county, out_path)
         print(f"  {count} tracts -> {out_path}")
+        return
+
+    if args.layer == "kauai_bus_major_stops":
+        out_path = RAW_DIR / "kauai_bus_major_stops.csv"
+        print("Fetching kauai_bus_major_stops (Kauai Bus GTFS, MobilityDatabase)...")
+        count = fetch_kauai_bus_major_stops(out_path)
+        print(f"  {count} stops -> {out_path}")
         return
 
     if args.layer in ("building_footprints", "all"):
