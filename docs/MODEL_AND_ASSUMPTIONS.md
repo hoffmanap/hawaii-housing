@@ -427,6 +427,38 @@ The TOD-rail "0 feasible" finding above was diagnosed correctly as structural, b
 
 **Honest limitations carried forward, stated rather than hidden:** no developer-profit margin is netted out (a more permissive bar than the for-sale test); hard/land costs are borrowed from each county's for-sale table (no rental-specific construction-cost source exists); the cap-rate cross-check (apartmentloanstore.com) is weak corroboration, not a primary citation. These are the next real things to tighten if a more rigorous rental pro forma is wanted, not hidden gaps.
 
+## Every reform now competes on BOTH tenures: dual-tenure feasibility and the "closing the loop" affordability split (2026-10-15, next day's work)
+
+Once a real rental test existed alongside the real for-sale test, the user asked the obvious next question directly: *"how do we account for the differences between the feasibility gap of for sale vs rental? If either one is feasible do we just assume it's going to get built? Do we then close the loop to say that by enacting such and such policy, it would likely create housing for either renters or for sale units at these different income bands?"*
+
+**The answer implemented is neither "either feasible → built" nor "sum the two."** Letting a tract count as feasible whenever EITHER pro forma clears would double-count — the same unit of zoning capacity would be reported once as a for-sale outcome and again as a rental outcome, when in reality a developer builds one product on a given parcel, not both. The correct mechanism, implemented in `build_model.combine_dual_tenure_feasibility(for_sale_df, rental_df)`:
+
+1. Run both the for-sale pro forma (`tract_scaled_development_fee_reduction_feasibility()` / `tract_scaled_oahu_development_fee_reduction_feasibility()`) and the rental pro forma (`tract_scaled_rental_feasibility()`) for every tract.
+2. Take `excess_value_usd = max(excess_value_for_sale, excess_value_rental)` per tract, and tag `winning_tenure` with whichever one produced it.
+3. `feasible = excess_value_usd >= 0`, same as before — but now it's the winning tenure's test, not an arbitrary single-tenure assumption.
+
+This is applied to every reform that has a feasibility gate — ADU, Missing Middle, and TOD (both modes), in both counties — rather than hardcoding ADU/Missing Middle to for-sale and TOD to rental as the prior round did. That prior hardcoding was itself an unstated assumption: nothing about ADU or Missing Middle zoning makes the resulting unit a for-sale product rather than a rental one (a duplex built under Missing Middle, or even an ADU, is at least as plausibly rented out as sold separately), and nothing about TOD-zoned land makes it only ever a rental apartment building rather than a condo tower. Letting both compete and taking the winner is the honest version of "whichever a developer would actually choose to build."
+
+**"Closing the loop":** `build_model.apply_dual_tenure_affordability_gate()` routes each tract's feasibility-adjusted units through the correct income distribution for whichever tenure won that tract — for-sale-won tracts check the real ACS B19001 owner/all-household income brackets (same mechanism as before); rental-won tracts check the real ACS B25118 renter-occupied-household brackets. Because `winning_tenure` is set once per tract by the feasibility step, each tract's units are tested against exactly one income distribution, never both and never neither — the same non-double-counting discipline carried one step further downstream. The function returns both a combined `affordability_adjusted_units` figure (so existing code that expects one number still works) and `affordability_adjusted_units_for_sale` / `_rental` breakouts, which is what actually answers "would this create housing for renters or for owners, and at what income band":
+
+| County | Reform | Raw (zoning capacity) | Feasibility-adjusted (either tenure) | → For-sale afford. | → Rental afford. | Total afford. |
+|---|---|---|---|---|---|---|
+| Kauai | ADU | 144.7 | 108.2 | 0.0 | 5.3 | 5.3 |
+| Kauai | Missing Middle | 4,095.5 | 2,899.1 | 0.0 | 32.8 | 32.8 |
+| Kauai | TOD (bus) | 137,280.1 | 107,702.9 | 0.0 | 3,347.3 | 3,347.3 |
+| Honolulu | ADU | 6,834.8 | 3,414.4 | 157.0 | 860.4 | 1,017.4 |
+| Honolulu | Missing Middle | 33,001.2 | 16,777.4 | 796.7 | 4,118.8 | 4,915.5 |
+| Honolulu | TOD (bus) | 824,806.2 | 322,627.4 | 13,518.7 | 81,421.2 | 94,940.0 |
+| Honolulu | TOD (rail) | 72,240.1 | 20,759.2 | 0.0 | 5,687.9 | 5,687.9 |
+
+Tenure-win counts among feasible tracts: Kauai 12 for-sale / 1 rental (of 17 tracts); Honolulu 38 for-sale / 79 rental (of 288 tracts with both tests available). Two real findings fall out of this, stated plainly:
+
+- **Kauai's affordable housing, under either tenure, is overwhelmingly rental, not for-sale** — the for-sale affordability gate has been 0% in every single Kauai tract since this project's first feasibility pass (no sale price any feasible tract can support is in reach of any real Kauai household's income), so even though for-sale pencils as the more profitable product in 12 of 17 feasible Kauai tracts, essentially none of that capacity converts into affordability-constrained units; virtually all of Kauai's affordable outcome comes from the minority of tracts where rental wins the feasibility test.
+- **Honolulu's result is a genuine mix** — a real, nonzero for-sale affordability contribution now shows up (157.0 ADU units, 796.7 Missing Middle units, 13,518.7 TOD-bus units) alongside the larger rental contribution, meaning Honolulu's reforms would plausibly create BOTH owner-occupied and rental housing, at different income bands, in different tracts — a materially more informative statement than a single blended number.
+- **TOD-rail's result is unchanged (0.0 for-sale)**: HART Skyline's 13 open stations sit in Honolulu's industrial/working corridor, where the for-sale pro forma (calibrated to the county's priciest neighborhoods) never clears regardless of being allowed to compete — confirming, rather than contradicting, this round's earlier diagnosis.
+
+**STATED SIMPLIFICATION, carried forward honestly:** a tract where BOTH tenures pencil is winner-take-all (100% of that tract's capacity tagged to whichever excess value is larger), not split between the two. The economically more accurate version would split a tract's capacity by a real local multifamily-rental-vs-for-sale permit-mix ratio for that submarket; no such tract-level source is in this project yet, so this states the simplification rather than inventing a split ratio. Likewise, applying the SAME single rental pro forma (the Skyline TOD study's apartment-building economics) to ADU and Missing Middle as to TOD is a real, stated reuse of one calibrated reference product across very different physical products (a single accessory unit vs. a multifamily building) — the same evidentiary status the for-sale townhome reference product already carries when applied to all three reforms, not a new or hidden assumption.
+
 # Core Assumptions and Their Rationale
 
 | Assumption | Value / choice | Rationale | Source |

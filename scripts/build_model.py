@@ -2539,11 +2539,179 @@ def apply_feasibility_gate(
     scenario_tract_df["GEOID"] = scenario_tract_df["GEOID"].astype(str)
     feasibility_df = feasibility_df.copy()
     feasibility_df["GEOID"] = feasibility_df["GEOID"].astype(str)
-    merged = scenario_tract_df.merge(
-        feasibility_df[["GEOID", "feasible", "excess_value_usd"]], on="GEOID", how="left"
-    )
+    merge_cols = ["GEOID", "feasible", "excess_value_usd"]
+    # When `feasibility_df` comes from combine_dual_tenure_feasibility()
+    # (added 2026-10-15), carry `winning_tenure` through too -- it's what
+    # apply_dual_tenure_affordability_gate() needs downstream to route
+    # each tract to the correct (for-sale vs rental) income distribution.
+    # Single-tenure feasibility DataFrames don't have this column, so
+    # this is a no-op for every existing call site.
+    if "winning_tenure" in feasibility_df.columns:
+        merge_cols.append("winning_tenure")
+    merged = scenario_tract_df.merge(feasibility_df[merge_cols], on="GEOID", how="left")
     merged["feasible"] = merged["feasible"].fillna(False)
     merged["feasibility_adjusted_units"] = merged[estimated_units_col].where(merged["feasible"], 0.0)
+    return merged
+
+
+def combine_dual_tenure_feasibility(
+    for_sale_feasibility_df: pd.DataFrame,
+    rental_feasibility_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Combines a for-sale and a rental feasibility test for the SAME
+    tracts into ONE feasibility verdict per tract. Added 2026-10-15, per
+    the user's direct question: "how do we account for the differences
+    between the feasibility gap of for sale vs rental? If either one is
+    feasible do we just assume it's going to get built?"
+
+    The answer implemented here is neither "either feasible -> built"
+    (which would let one unit of zoning capacity count as BOTH a
+    for-sale AND a rental outcome -- double-counting it) nor summing the
+    two excess values. A given unit of zoning capacity gets built as ONE
+    product: a developer builds whichever pencils better, not both. So
+    this takes the per-tract MAX of the two tests' `excess_value_usd`
+    and tags which tenure won via `winning_tenure`. Exactly one tenure
+    wins per tract (or neither, if both are infeasible), which is what
+    lets `apply_dual_tenure_affordability_gate()` below route each
+    tract's capacity to the correct income distribution without any unit
+    ever being counted under both tenures.
+
+    A tract missing one side's feasibility data (e.g. no ACS median
+    gross rent for the rental test) simply isn't tested on that axis --
+    it competes only on whichever side has data, rather than being
+    dropped or defaulted to infeasible on the missing side.
+
+    STATED SIMPLIFICATION: a tract where BOTH tenures pencil is treated
+    winner-take-all (100% of that tract's capacity tagged with whichever
+    excess value is larger), not split between the two. A more granular
+    model would split it by a real local multifamily-rental-vs-for-sale
+    permit-mix share for that submarket; no such tract-level source is in
+    this project yet, so this states the simplification rather than
+    inventing a split ratio.
+    """
+    fs = for_sale_feasibility_df[["GEOID", "excess_value_usd"]].copy()
+    fs["GEOID"] = fs["GEOID"].astype(str)
+    fs = fs.rename(columns={"excess_value_usd": "excess_value_usd_for_sale"})
+
+    rent = rental_feasibility_df[["GEOID", "excess_value_usd"]].copy()
+    rent["GEOID"] = rent["GEOID"].astype(str)
+    rent = rent.rename(columns={"excess_value_usd": "excess_value_usd_rental"})
+
+    merged = fs.merge(rent, on="GEOID", how="outer")
+
+    rows = []
+    for _, r in merged.iterrows():
+        fs_val = r["excess_value_usd_for_sale"]
+        rent_val = r["excess_value_usd_rental"]
+        fs_ok = pd.notna(fs_val)
+        rent_ok = pd.notna(rent_val)
+        if fs_ok and rent_ok:
+            if fs_val >= rent_val:
+                winning_tenure, excess_value = "for_sale", fs_val
+            else:
+                winning_tenure, excess_value = "rental", rent_val
+        elif fs_ok:
+            winning_tenure, excess_value = "for_sale", fs_val
+        elif rent_ok:
+            winning_tenure, excess_value = "rental", rent_val
+        else:
+            winning_tenure, excess_value = None, None
+        rows.append(
+            {
+                "GEOID": r["GEOID"],
+                "excess_value_usd_for_sale": fs_val,
+                "excess_value_usd_rental": rent_val,
+                "winning_tenure": winning_tenure,
+                "excess_value_usd": excess_value,
+                "feasible": (excess_value is not None) and (excess_value >= 0),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def apply_dual_tenure_affordability_gate(
+    scenario_tract_df: pd.DataFrame,
+    for_sale_affordability_df: pd.DataFrame,
+    rental_affordability_df: pd.DataFrame,
+    units_col: str = "feasibility_adjusted_units",
+) -> pd.DataFrame:
+    """
+    Dual-tenure analog of apply_affordability_gate(), added 2026-10-15
+    alongside combine_dual_tenure_feasibility() -- see that function's
+    docstring for the "why" (not double-counting a unit under both
+    tenures).
+
+    Requires `scenario_tract_df` to already carry a `winning_tenure`
+    column, i.e. it must have been run through apply_feasibility_gate()
+    using a combine_dual_tenure_feasibility() output as the feasibility
+    df. This routes each tract's `units_col` through the CORRECT
+    affordability test for whichever tenure won that tract's feasibility
+    test: for_sale-won tracts check the real ACS B19001-derived owner-
+    household affordability percentage; rental-won tracts check the real
+    ACS B25118 renter-occupied-household one. Exactly one tenure's
+    affordability percentage applies per tract -- nothing is counted, or
+    discounted, twice.
+
+    This "closes the loop" the user asked about: alongside the combined
+    `affordability_adjusted_units` column (kept so existing dashboard
+    code that only knows the single-tenure column name still works
+    unchanged), it adds `affordability_adjusted_units_for_sale` and
+    `affordability_adjusted_units_rental` breakouts, plus the
+    tenure-specific required-income figures, so a reform's impact can be
+    reported as "creates N units; M affordable to owner households
+    earning $A+, K affordable to renter households earning $B+" instead
+    of one blended number that hides which households actually benefit.
+    """
+    df = scenario_tract_df.copy()
+    df["GEOID"] = df["GEOID"].astype(str)
+    if "winning_tenure" not in df.columns:
+        raise ValueError(
+            "scenario_tract_df must carry a 'winning_tenure' column -- run it through "
+            "apply_feasibility_gate() with a combine_dual_tenure_feasibility() output first."
+        )
+
+    fs_afford = for_sale_affordability_df[["GEOID", "pct_households_affording", "required_income_usd"]].copy()
+    fs_afford["GEOID"] = fs_afford["GEOID"].astype(str)
+    fs_afford = fs_afford.rename(
+        columns={
+            "pct_households_affording": "pct_households_affording_for_sale",
+            "required_income_usd": "required_income_usd_for_sale",
+        }
+    )
+    rent_afford = rental_affordability_df[["GEOID", "pct_households_affording", "required_income_usd"]].copy()
+    rent_afford["GEOID"] = rent_afford["GEOID"].astype(str)
+    rent_afford = rent_afford.rename(
+        columns={
+            "pct_households_affording": "pct_households_affording_rental",
+            "required_income_usd": "required_income_usd_rental",
+        }
+    )
+
+    merged = df.merge(fs_afford, on="GEOID", how="left").merge(rent_afford, on="GEOID", how="left")
+    merged["pct_households_affording_for_sale"] = merged["pct_households_affording_for_sale"].fillna(0.0)
+    merged["pct_households_affording_rental"] = merged["pct_households_affording_rental"].fillna(0.0)
+
+    is_for_sale = merged["winning_tenure"] == "for_sale"
+    is_rental = merged["winning_tenure"] == "rental"
+
+    merged["affordability_adjusted_units_for_sale"] = 0.0
+    merged["affordability_adjusted_units_rental"] = 0.0
+    merged.loc[is_for_sale, "affordability_adjusted_units_for_sale"] = (
+        merged.loc[is_for_sale, units_col] * merged.loc[is_for_sale, "pct_households_affording_for_sale"] / 100
+    )
+    merged.loc[is_rental, "affordability_adjusted_units_rental"] = (
+        merged.loc[is_rental, units_col] * merged.loc[is_rental, "pct_households_affording_rental"] / 100
+    )
+    merged["affordability_adjusted_units"] = (
+        merged["affordability_adjusted_units_for_sale"] + merged["affordability_adjusted_units_rental"]
+    )
+    merged["pct_households_affording"] = 0.0
+    merged.loc[is_for_sale, "pct_households_affording"] = merged.loc[is_for_sale, "pct_households_affording_for_sale"]
+    merged.loc[is_rental, "pct_households_affording"] = merged.loc[is_rental, "pct_households_affording_rental"]
+    merged["required_income_usd"] = pd.NA
+    merged.loc[is_for_sale, "required_income_usd"] = merged.loc[is_for_sale, "required_income_usd_for_sale"]
+    merged.loc[is_rental, "required_income_usd"] = merged.loc[is_rental, "required_income_usd_rental"]
     return merged
 
 

@@ -97,24 +97,40 @@ def build_kauai_features() -> tuple[list, dict]:
     # transit mode (no rail), capped at the statute's FAR 4.0 base tier.
     tod_tract, tod_meta = bm.run_tod_scenario("kauai", mode="bus")
     feas = bm.tract_scaled_development_fee_reduction_feasibility()
-    # TOD models a rental apartment product (815 sqft unit size, mode-
-    # agnostic FAR standard -- never a for-sale townhome), so it gets its
-    # own rental feasibility test (added 2026-10-15 per the user's direct
-    # request), not the for-sale pro forma ADU/Missing Middle use. Prior
-    # to this, TOD was incorrectly gated on the SAME for-sale `feas` as
-    # ADU/Missing Middle while already using a RENTAL affordability gate
-    # below -- a real mismatch, fixed here.
+    # Real rental-product feasibility test (added 2026-10-15 per the
+    # user's direct request) -- Skyline TOD Feasibility Study rent/cap-
+    # rate inputs, tract-scaled by ACS median gross rent.
     tod_rental_feas = bm.tract_scaled_rental_feasibility("kauai")
+    # Dual-tenure feasibility test, added 2026-10-15 (next day's work),
+    # per the user's direct question: "how do we account for the
+    # differences between the feasibility gap of for sale vs rental? If
+    # either one is feasible do we just assume it's going to get built?"
+    # Every reform's capacity (ADU, Missing Middle, TOD) now competes on
+    # BOTH pro formas per tract; combine_dual_tenure_feasibility() takes
+    # the max of the two excess values and tags which tenure won, so a
+    # unit of capacity is counted under exactly one tenure outcome, never
+    # both. Prior to this, TOD was gated on rental only and ADU/Missing
+    # Middle on for-sale only, as if a parcel could only ever become one
+    # tenure or the other by the type of reform, not by which product
+    # actually pencils there -- see build_model.py's
+    # combine_dual_tenure_feasibility() docstring for the full reasoning.
+    combined_feas = bm.combine_dual_tenure_feasibility(feas, tod_rental_feas)
 
-    adu_gated = bm.apply_feasibility_gate(adu_tract, feas, "estimated_new_units")
-    mm_gated = bm.apply_feasibility_gate(mm_tract, feas, "additional_estimated_units")
-    tod_gated = bm.apply_feasibility_gate(tod_tract, tod_rental_feas, "additional_estimated_units")
+    adu_gated = bm.apply_feasibility_gate(adu_tract, combined_feas, "estimated_new_units")
+    mm_gated = bm.apply_feasibility_gate(mm_tract, combined_feas, "additional_estimated_units")
+    tod_gated = bm.apply_feasibility_gate(tod_tract, combined_feas, "additional_estimated_units")
 
     afford_for_sale = bm.tract_affordability_constrained_capacity(sales_feasibility_df=feas, tenure="for_sale")
     afford_rental = bm.tract_affordability_constrained_capacity(tenure="rental")
-    adu_gated = bm.apply_affordability_gate(adu_gated, afford_for_sale, "feasibility_adjusted_units")
-    mm_gated = bm.apply_affordability_gate(mm_gated, afford_for_sale, "feasibility_adjusted_units")
-    tod_gated = bm.apply_affordability_gate(tod_gated, afford_rental, "feasibility_adjusted_units")
+    # Routes each tract's feasibility-adjusted units through whichever
+    # tenure actually won that tract's feasibility test -- "closing the
+    # loop" the user asked for: a for-sale-won tract's units are checked
+    # against real owner-household income brackets (ACS B19001), a
+    # rental-won tract's against real renter-household income brackets
+    # (ACS B25118), never both and never neither.
+    adu_gated = bm.apply_dual_tenure_affordability_gate(adu_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
+    mm_gated = bm.apply_dual_tenure_affordability_gate(mm_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
+    tod_gated = bm.apply_dual_tenure_affordability_gate(tod_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
 
     acs = pd.read_csv(RAW_DIR / "acs_commute_density_kauai.csv")
     acs["GEOID"] = acs["GEOID"].astype(str)
@@ -191,16 +207,19 @@ def build_kauai_features() -> tuple[list, dict]:
             "adu_feasible": adu_r.get("feasible"),
             "adu_pct_affording": adu_r.get("pct_households_affording"),
             "adu_excess_value_usd_at_fee50k": adu_r.get("excess_value_usd"),
+            "adu_winning_tenure": adu_r.get("winning_tenure"),
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_feasible": mm_r.get("feasible"),
             "mm_pct_affording": mm_r.get("pct_households_affording"),
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
+            "mm_winning_tenure": mm_r.get("winning_tenure"),
             "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
             "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
             "tod_feasible": tod_r.get("feasible"),
             "tod_pct_affording": tod_r.get("pct_households_affording"),
             "tod_excess_value_usd_at_fee50k": tod_r.get("excess_value_usd"),
+            "tod_winning_tenure": tod_r.get("winning_tenure"),
             "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
@@ -251,11 +270,27 @@ def build_kauai_features() -> tuple[list, dict]:
         "affordability_note": (
             "Of the feasibility-adjusted units, pct_affording is the real share of "
             "that TRACT's OWN households whose income clears the mortgage/rent bar "
-            "for the comps-implied price (ADU/Missing Middle: 20% down, 7.000% 30-yr "
-            "fixed, HiCentral 2026-10-14; TOD: countywide Zillow ZORI rent), per ACS "
-            "B19001 income brackets -- not a median-based guess. This is a demand-side "
-            "ceiling, separate from and multiplicative with the absorption rate."
+            "for the comps-implied price (for_sale-won tracts: 20% down, 7.000% 30-yr "
+            "fixed, HiCentral 2026-10-14, per ACS B19001; rental-won tracts: countywide "
+            "ZORI rent, per ACS B25118 renter-occupied households) -- not a median-based "
+            "guess. This is a demand-side ceiling, separate from and multiplicative with "
+            "the absorption rate."
         ),
+        "tenure_split_note": (
+            "Added 2026-10-15: every reform's capacity now competes on BOTH a for-sale "
+            "and a rental pro forma per tract; combine_dual_tenure_feasibility() takes "
+            "the max excess value and tags which tenure wins, so a unit of capacity is "
+            "counted under exactly one tenure, never both. affordability_adjusted_units "
+            "is split into _for_sale and _rental totals below, by reform, so impact can "
+            "be reported by which households actually benefit (owner-household income "
+            "band vs. renter-household income band), not one blended figure."
+        ),
+        "adu_affordability_adjusted_units_for_sale": round(adu_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "adu_affordability_adjusted_units_rental": round(adu_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "mm_affordability_adjusted_units_for_sale": round(mm_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "mm_affordability_adjusted_units_rental": round(mm_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "tod_affordability_adjusted_units_for_sale": round(tod_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "tod_affordability_adjusted_units_rental": round(tod_gated["affordability_adjusted_units_rental"].sum(), 1),
     }
     return features, metadata
 
@@ -330,19 +365,37 @@ def build_honolulu_features() -> tuple[list, dict]:
     honolulu_tod_rental_feas = bm.tract_scaled_rental_feasibility(
         "honolulu", development_fee_usd=bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
     )
-    adu_tract = bm.apply_feasibility_gate(adu_tract, honolulu_feas, "estimated_new_units")
-    mm_tract = bm.apply_feasibility_gate(mm_tract, honolulu_feas, "additional_estimated_units")
-    tod_bus_tract = bm.apply_feasibility_gate(tod_bus_tract, honolulu_tod_rental_feas, "additional_estimated_units")
-    tod_rail_tract = bm.apply_feasibility_gate(tod_rail_tract, honolulu_tod_rental_feas, "additional_estimated_units")
+    # Dual-tenure feasibility test, added 2026-10-15 (next day's work),
+    # per the user's direct question: "how do we account for the
+    # differences between the feasibility gap of for sale vs rental? If
+    # either one is feasible do we just assume it's going to get built?"
+    # Every reform's capacity (ADU, Missing Middle, both TOD modes) now
+    # competes on BOTH pro formas per tract; combine_dual_tenure_
+    # feasibility() takes the max excess value and tags which tenure
+    # won, so a unit of capacity is counted under exactly one tenure
+    # outcome, never both -- see build_model.py's docstring for the full
+    # reasoning.
+    honolulu_combined_feas = bm.combine_dual_tenure_feasibility(honolulu_feas, honolulu_tod_rental_feas)
+
+    adu_tract = bm.apply_feasibility_gate(adu_tract, honolulu_combined_feas, "estimated_new_units")
+    mm_tract = bm.apply_feasibility_gate(mm_tract, honolulu_combined_feas, "additional_estimated_units")
+    tod_bus_tract = bm.apply_feasibility_gate(tod_bus_tract, honolulu_combined_feas, "additional_estimated_units")
+    tod_rail_tract = bm.apply_feasibility_gate(tod_rail_tract, honolulu_combined_feas, "additional_estimated_units")
 
     honolulu_afford_for_sale = bm.honolulu_tract_affordability_constrained_capacity(
         sales_feasibility_df=honolulu_feas, tenure="for_sale"
     )
     honolulu_afford_rental = bm.honolulu_tract_affordability_constrained_capacity(tenure="rental")
-    adu_tract = bm.apply_affordability_gate(adu_tract, honolulu_afford_for_sale, "feasibility_adjusted_units")
-    mm_tract = bm.apply_affordability_gate(mm_tract, honolulu_afford_for_sale, "feasibility_adjusted_units")
-    tod_bus_tract = bm.apply_affordability_gate(tod_bus_tract, honolulu_afford_rental, "feasibility_adjusted_units")
-    tod_rail_tract = bm.apply_affordability_gate(tod_rail_tract, honolulu_afford_rental, "feasibility_adjusted_units")
+    # Routes each tract's feasibility-adjusted units through whichever
+    # tenure actually won that tract's feasibility test -- a for-sale-won
+    # tract's units are checked against real owner-household income
+    # brackets (ACS B19001), a rental-won tract's against real renter-
+    # household income brackets (ACS B25118), never both and never
+    # neither.
+    adu_tract = bm.apply_dual_tenure_affordability_gate(adu_tract, honolulu_afford_for_sale, honolulu_afford_rental, "feasibility_adjusted_units")
+    mm_tract = bm.apply_dual_tenure_affordability_gate(mm_tract, honolulu_afford_for_sale, honolulu_afford_rental, "feasibility_adjusted_units")
+    tod_bus_tract = bm.apply_dual_tenure_affordability_gate(tod_bus_tract, honolulu_afford_for_sale, honolulu_afford_rental, "feasibility_adjusted_units")
+    tod_rail_tract = bm.apply_dual_tenure_affordability_gate(tod_rail_tract, honolulu_afford_for_sale, honolulu_afford_rental, "feasibility_adjusted_units")
 
     adu_tract = adu_tract.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
     mm_tract = mm_tract.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
@@ -427,21 +480,25 @@ def build_honolulu_features() -> tuple[list, dict]:
             "adu_feasible": adu_r.get("feasible"),
             "adu_pct_affording": adu_r.get("pct_households_affording"),
             "adu_excess_value_usd_at_fee50k": adu_r.get("excess_value_usd"),
+            "adu_winning_tenure": adu_r.get("winning_tenure"),
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_feasible": mm_r.get("feasible"),
             "mm_pct_affording": mm_r.get("pct_households_affording"),
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
+            "mm_winning_tenure": mm_r.get("winning_tenure"),
             "tod_bus_eligible_parcels": tod_bus_r.get("eligible_parcel_count"),
             "tod_bus_gross_capacity": tod_bus_r.get("additional_gross_capacity"),
             "tod_bus_feasible": tod_bus_r.get("feasible"),
             "tod_bus_pct_affording": tod_bus_r.get("pct_households_affording"),
             "tod_bus_excess_value_usd_at_fee50k": tod_bus_r.get("excess_value_usd"),
+            "tod_bus_winning_tenure": tod_bus_r.get("winning_tenure"),
             "tod_rail_eligible_parcels": tod_rail_r.get("eligible_parcel_count"),
             "tod_rail_gross_capacity": tod_rail_r.get("additional_gross_capacity"),
             "tod_rail_feasible": tod_rail_r.get("feasible"),
             "tod_rail_pct_affording": tod_rail_r.get("pct_households_affording"),
             "tod_rail_excess_value_usd_at_fee50k": tod_rail_r.get("excess_value_usd"),
+            "tod_rail_winning_tenure": tod_rail_r.get("winning_tenure"),
             "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
@@ -482,10 +539,27 @@ def build_honolulu_features() -> tuple[list, dict]:
             "Iwilei-Kapalama O'ahu pro forma, tract-scaled by ACS median home value) and "
             "affordability gate (honolulu_tract_affordability_constrained_capacity() -- ACS "
             "B19001 income brackets vs. the required income for the comps-implied for-sale "
-            "price or, for TOD's rental product, Honolulu's own ZORI rent), added 2026-10-15. "
+            "price or, for the rental pro forma, Honolulu's own ZORI rent), added 2026-10-15. "
             "Parking Reduction is NOT gated, same as Kauai -- it reports land freed, not a unit "
             "count, so there's no unit figure to gate."
         ),
+        "tenure_split_note": (
+            "Added 2026-10-15 (next day's work): every reform's capacity now competes on BOTH "
+            "a for-sale and a rental pro forma per tract; combine_dual_tenure_feasibility() "
+            "takes the max excess value and tags which tenure wins, so a unit of capacity is "
+            "counted under exactly one tenure, never both. affordability_adjusted_units is "
+            "split into _for_sale and _rental totals below, by reform, so impact can be "
+            "reported by which households actually benefit (owner-household income band vs. "
+            "renter-household income band), not one blended figure."
+        ),
+        "adu_affordability_adjusted_units_for_sale": round(adu_tract["affordability_adjusted_units_for_sale"].sum(), 1),
+        "adu_affordability_adjusted_units_rental": round(adu_tract["affordability_adjusted_units_rental"].sum(), 1),
+        "mm_affordability_adjusted_units_for_sale": round(mm_tract["affordability_adjusted_units_for_sale"].sum(), 1),
+        "mm_affordability_adjusted_units_rental": round(mm_tract["affordability_adjusted_units_rental"].sum(), 1),
+        "tod_bus_affordability_adjusted_units_for_sale": round(tod_bus_tract["affordability_adjusted_units_for_sale"].sum(), 1),
+        "tod_bus_affordability_adjusted_units_rental": round(tod_bus_tract["affordability_adjusted_units_rental"].sum(), 1),
+        "tod_rail_affordability_adjusted_units_for_sale": round(tod_rail_tract["affordability_adjusted_units_for_sale"].sum(), 1),
+        "tod_rail_affordability_adjusted_units_rental": round(tod_rail_tract["affordability_adjusted_units_rental"].sum(), 1),
     }
     return features, metadata
 
