@@ -91,6 +91,14 @@ def build_kauai_features() -> tuple[list, dict]:
 
     adu_tract, _ = bm.run_adu_scenario("kauai")
     mm_tract, _ = bm.run_missing_middle_scenario("kauai")
+    # BASELINE scenario, added 2026-10-16 per the user's direct request
+    # to develop "the baseline scenarios based on existing zoned
+    # capacity," not just the reform/intervention numbers -- what
+    # today's zoning already legally allows beyond what's built, before
+    # any Missing Middle upzoning. See run_missing_middle_baseline_tract()'s
+    # docstring: this number existed internally (as a == 0 eligibility
+    # filter) but was never itself rolled up and reported until now.
+    mm_baseline_tract = bm.run_missing_middle_baseline_tract("kauai")
     parking_tract, _ = bm.run_parking_reduction_scenario("kauai")
     # TOD rebuilt 2026-10-15 on the real statutory eligibility test (see
     # build_model.py's TOD comment block) -- "bus" is Kauai's only real
@@ -176,6 +184,9 @@ def build_kauai_features() -> tuple[list, dict]:
     adu_by_geoid = {r["GEOID"]: r for r in adu_gated.to_dict("records")}
     mm_by_geoid = {r["GEOID"]: r for r in mm_gated.to_dict("records")}
     tod_by_geoid = {r["GEOID"]: r for r in tod_gated.to_dict("records")}
+    mm_baseline_tract = mm_baseline_tract.copy()
+    mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
+    mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
     parking_tract = parking_tract.copy()
     parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
     parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records") if pd.notna(r.get("GEOID"))}
@@ -194,6 +205,7 @@ def build_kauai_features() -> tuple[list, dict]:
         mm_r = mm_by_geoid.get(geoid, {})
         tod_r = tod_by_geoid.get(geoid, {})
         parking_r = parking_by_geoid.get(geoid, {})
+        mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
         acs_r = acs_by_geoid.get(geoid, {})
         income_r = income_by_geoid.get(geoid, {})
         sales_r = sales_by_geoid.get(geoid, {})
@@ -214,6 +226,7 @@ def build_kauai_features() -> tuple[list, dict]:
             "mm_pct_affording": mm_r.get("pct_households_affording"),
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             "mm_winning_tenure": mm_r.get("winning_tenure"),
+            "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
             "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
             "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
             "tod_feasible": tod_r.get("feasible"),
@@ -291,6 +304,18 @@ def build_kauai_features() -> tuple[list, dict]:
         "mm_affordability_adjusted_units_rental": round(mm_gated["affordability_adjusted_units_rental"].sum(), 1),
         "tod_affordability_adjusted_units_for_sale": round(tod_gated["affordability_adjusted_units_for_sale"].sum(), 1),
         "tod_affordability_adjusted_units_rental": round(tod_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "baseline_scenario_note": (
+            "Added 2026-10-16: ADU's reported number already IS the baseline -- current Kauai "
+            "code's own 2-ADU-per-lot mandate (Act 39/SB3202), not a hypothetical reform (see the "
+            "legislation section above). Missing Middle's baseline is now reported separately too: "
+            "mm_baseline_capacity_estimated_units is what today's zoning already legally allows "
+            "beyond what's built, BEFORE any Missing Middle upzoning -- previously computed "
+            "internally (as an eligibility filter) but never itself rolled up and shown. TOD's own "
+            "additional_estimated_units now nets out this same existing-zoned-capacity baseline "
+            "(whichever is larger of what's built or what current zoning already permits), not just "
+            "what's physically built today, fixing a real understatement of TOD's true baseline."
+        ),
+        "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
     }
     return features, metadata
 
@@ -334,6 +359,15 @@ def build_honolulu_features() -> tuple[list, dict]:
     default_absorption_rate = bm.absorption_rate_benchmark_for("honolulu")
     adu_tract, _ = bm.run_adu_scenario("honolulu")
     mm_tract, _ = bm.run_missing_middle_scenario("honolulu")
+    # BASELINE scenario, added 2026-10-16 -- see the matching Kauai
+    # comment above. Honolulu's number is 0 everywhere under the
+    # coarser label-based baseline method (no sourced density-per-acre
+    # rule for Honolulu's R-districts -- see run_missing_middle_baseline()'s
+    # docstring), which is a real, stated limitation, not a bug: it
+    # means this project doesn't yet have the data to say how much
+    # EXTRA headroom Honolulu's current zoning allows beyond single-
+    # family, only whether a parcel is single-family-restricted at all.
+    mm_baseline_tract = bm.run_missing_middle_baseline_tract("honolulu")
     parking_tract, _ = bm.run_parking_reduction_scenario("honolulu")
     # TOD rebuilt 2026-10-15 on the real statutory eligibility test --
     # Honolulu has BOTH real transit modes (TheBus + Skyline rail, same
@@ -407,6 +441,9 @@ def build_honolulu_features() -> tuple[list, dict]:
     parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records")}
     tod_bus_by_geoid = {r["GEOID"]: r for r in tod_bus_tract.to_dict("records")}
     tod_rail_by_geoid = {r["GEOID"]: r for r in tod_rail_tract.to_dict("records")}
+    mm_baseline_tract = mm_baseline_tract.copy()
+    mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
+    mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
 
     place_by_geoid = {}
     places_path = RAW_DIR / "census_places.json"
@@ -464,6 +501,7 @@ def build_honolulu_features() -> tuple[list, dict]:
         parking_r = parking_by_geoid.get(geoid, {})
         tod_bus_r = tod_bus_by_geoid.get(geoid, {})
         tod_rail_r = tod_rail_by_geoid.get(geoid, {})
+        mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": "honolulu",
@@ -487,6 +525,7 @@ def build_honolulu_features() -> tuple[list, dict]:
             "mm_pct_affording": mm_r.get("pct_households_affording"),
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             "mm_winning_tenure": mm_r.get("winning_tenure"),
+            "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
             "tod_bus_eligible_parcels": tod_bus_r.get("eligible_parcel_count"),
             "tod_bus_gross_capacity": tod_bus_r.get("additional_gross_capacity"),
             "tod_bus_feasible": tod_bus_r.get("feasible"),
@@ -560,6 +599,18 @@ def build_honolulu_features() -> tuple[list, dict]:
         "tod_bus_affordability_adjusted_units_rental": round(tod_bus_tract["affordability_adjusted_units_rental"].sum(), 1),
         "tod_rail_affordability_adjusted_units_for_sale": round(tod_rail_tract["affordability_adjusted_units_for_sale"].sum(), 1),
         "tod_rail_affordability_adjusted_units_rental": round(tod_rail_tract["affordability_adjusted_units_rental"].sum(), 1),
+        "baseline_scenario_note": (
+            "Added 2026-10-16: ADU's reported number already IS the baseline -- current law's own "
+            "2-ADU-per-lot mandate (Act 39/SB3202), not a hypothetical reform. Missing Middle's "
+            "baseline capacity under EXISTING zoning is 0 everywhere for Honolulu -- a real, stated "
+            "data limitation (no sourced density-per-acre rule for Honolulu's R-districts), not a "
+            "finding that no headroom exists. TOD's additional_estimated_units now nets out the "
+            "true existing-zoned-capacity baseline (whichever is larger of what's built or what "
+            "current zoning permits via max_units_by_density), not just what's physically built -- "
+            "though for Honolulu specifically this has no effect, since the same missing density-"
+            "per-acre data means max_units_by_density is 0 for every Honolulu parcel too."
+        ),
+        "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
     }
     return features, metadata
 

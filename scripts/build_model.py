@@ -639,6 +639,55 @@ def run_missing_middle_baseline(county: str) -> pd.DataFrame:
     return parcel_table
 
 
+def run_missing_middle_baseline_tract(county: str) -> pd.DataFrame:
+    """
+    Rolls run_missing_middle_baseline()'s parcel-level `baseline_capacity`
+    up to the tract level, added 2026-10-16 per the user's direct
+    instruction: "we need to develop both the baseline scenario and the
+    scenarios with the zoning interventions ... we haven't developed the
+    baseline scenarios based on existing zoned capacity."
+
+    This number existed in the model since the Missing Middle buildable-
+    area work (it's what run_missing_middle_scenario() uses to decide
+    which parcels are even eligible for the reform), but it was never
+    itself rolled up and reported -- only used internally as a == 0
+    filter. The actual MAGNITUDE of baseline_capacity on parcels where
+    it's positive (current zoning already permits more units than exist
+    today, with no reform needed) was being computed and then discarded.
+    This function is what lets the dashboard report "baseline: what
+    today's zoning already allows" as its own real number, alongside
+    "reform: what Missing Middle adds beyond that" -- the two halves of
+    the baseline/policy-intervention split this project has applied
+    everywhere else, now applied to the zoning-capacity side of Missing
+    Middle too, not just the feasibility/affordability gates.
+
+    Returns one row per tract: `baseline_capacity_gross` (sum of
+    parcel-level baseline_capacity, NA treated as 0 -- a parcel outside
+    the density-rule/single-family-district scope simply contributes
+    zero headroom, not a missing value upstream) and
+    `baseline_capacity_estimated_units` (scaled by the same absorption
+    rate every other scenario uses, since this is still capacity that
+    needs to actually get built, not a stock that materializes at once).
+    """
+    parcel_table = run_missing_middle_baseline(county)
+    cfg = COUNTY_CONFIG[county]
+    parcel_table["baseline_capacity"] = parcel_table["baseline_capacity"].fillna(0)
+
+    tract_rollup = (
+        parcel_table.groupby("GEOID", observed=True)
+        .agg(
+            baseline_eligible_parcel_count=(cfg["parcel_id_field"], lambda s: (parcel_table.loc[s.index, "baseline_capacity"] > 0).sum()),
+            baseline_capacity_gross=("baseline_capacity", "sum"),
+        )
+        .reset_index()
+    )
+    absorption_rate = absorption_rate_benchmark_for(county)
+    tract_rollup["baseline_capacity_estimated_units"] = (
+        tract_rollup["baseline_capacity_gross"] * absorption_rate
+    ).round(1)
+    return tract_rollup
+
+
 def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     """
     Missing Middle / Gentle Density INTERVENTION: the reform only applies
@@ -1002,9 +1051,21 @@ def run_tod_scenario(
     building heights and/or increased floor area ratios"). Per the same
     baseline/intervention principle used everywhere else in this
     project: additional_estimated_units = max(0, reform_capacity -
-    existing_units_estimate), not reform_capacity on its own, so this
-    never reports a TOD-eligible parcel's full zoned capacity as if it
-    were the reform's incremental effect.
+    true_baseline), not reform_capacity on its own, so this never
+    reports a TOD-eligible parcel's full zoned capacity as if it were
+    the reform's incremental effect.
+
+    **Baseline fixed 2026-10-16:** `true_baseline` is
+    max(existing_units_estimate, max_units_by_density) -- what's
+    actually built OR what today's non-TOD zoning already legally
+    allows, whichever is larger -- not existing_units_estimate alone.
+    The prior version credited TOD with a parcel's unused CURRENT legal
+    headroom (capacity the parcel's base zoning already permits but
+    nobody has built yet) as if the TOD reform had unlocked it, which
+    overstates the reform the same way reporting a reform's total
+    capacity as its incremental impact would. See
+    run_missing_middle_baseline_tract() for the equivalent fix applied
+    to Missing Middle's baseline reporting.
 
     `mode` selects which real transit-stop dataset this buffers around
     ("bus": TheBus/Kauai Bus, available in both counties, capped at FAR
@@ -1047,7 +1108,24 @@ def run_tod_scenario(
     reform_capacity = (
         (parcel_table["parcel_area_sqft"] * parcel_table["tod_far"].astype("Float64")) / unit_size_gsf
     ).apply(lambda v: math.floor(v) if pd.notna(v) else 0)
-    additional_capacity = (reform_capacity - parcel_table["existing_units_estimate"]).clip(lower=0)
+    # BASELINE fix, added 2026-10-16 per the user's direct instruction to
+    # develop "baseline scenarios based on existing zoned capacity," not
+    # just the reform numbers: this used to subtract only
+    # existing_units_estimate (what's physically BUILT on the parcel
+    # today), which understates the real baseline on any parcel whose
+    # CURRENT (non-TOD) zoning already permits more units than are built
+    # -- that unused legal headroom is baseline capacity under today's
+    # law, not something TOD's FAR bonus unlocks, and crediting it to TOD
+    # would overstate the reform's incremental effect exactly the way
+    # this project's core principle (baseline vs. policy intervention,
+    # never conflated) says not to. The real baseline is now whichever is
+    # larger: what's actually built (existing_units_estimate) or what
+    # today's zoning already legally allows (max_units_by_density, the
+    # same field Missing Middle's baseline uses) -- a parcel gets credit
+    # against TOD only for capacity beyond BOTH.
+    zoned_baseline = parcel_table["max_units_by_density"].fillna(0)
+    true_baseline = pd.concat([parcel_table["existing_units_estimate"], zoned_baseline], axis=1).max(axis=1)
+    additional_capacity = (reform_capacity - true_baseline).clip(lower=0)
     additional_capacity = additional_capacity.where(parcel_table["tod_eligible"], 0)
 
     eligible_mask = (parcel_table["tod_eligible"]) & (additional_capacity > 0)
