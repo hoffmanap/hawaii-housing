@@ -1246,17 +1246,37 @@ def kauai_parking_reform_context(acs_commute_density_csv: Path | None = None) ->
     total_pop = df["population"].sum()
     countywide_alt_mode_pct = (df["pct_alt_mode_commute"] * df["commuters_excl_wfh"]).sum() / total_commuters
     countywide_density = (df["density_per_sqmi"] * df["population"]).sum() / total_pop
+    # Quantified low-end estimate, added 2026-10-16 per direct request
+    # ("say how much the model suggests parking demand could be reduced
+    # from the baseline"): the two cities the study's own text labels
+    # "low density, high car dependency -- minimal effect" are Kauai's
+    # closest qualitative match in the sample (no numeric density/commute
+    # figures for the comparison cities themselves are sourced in this
+    # project, so this stays a range drawn from THEIR own observed
+    # outcomes, not a regression against unsourced inputs).
+    minimal_effect_cities = {
+        city: vals for city, vals in PARKING_STUDY_CITY_BENCHMARKS.items()
+        if "minimal effect" in vals[2]
+    }
+    minimal_effect_reductions = sorted(
+        round(100 * (1 - after / before), 1) for before, after, _ in minimal_effect_cities.values()
+    )
     return {
         "available": True,
         "countywide_alt_mode_commute_pct": round(countywide_alt_mode_pct, 1),
         "countywide_density_per_sqmi": round(countywide_density, 1),
         "study_city_benchmarks": PARKING_STUDY_CITY_BENCHMARKS,
         "low_end_context": PARKING_STUDY_LOW_END_ALT_MODE_COMMUTE_CONTEXT,
+        "low_end_reduction_pct_range": minimal_effect_reductions,
+        "low_end_reduction_cities": list(minimal_effect_cities.keys()),
         "verdict": "Kauai's countywide non-car commute share (~5%) and density (~675 people/sq "
         "mi) sit below the study's own 'minimal effect' anchor cities (Grand Rapids, Hartford) "
         "on both axes -- consistent with the Challenge's starting assumption that reducing "
         "parking requirements changes land use, not with a specific predicted reduction ratio. "
-        "No numeric post-reform parking-supply ratio is applied to Kauai as a result.",
+        f"Those two cities' OWN observed post-reform parking-supply reduction "
+        f"({minimal_effect_reductions[0]}%-{minimal_effect_reductions[1]}%) is the best-supported "
+        "quantified estimate for Kauai -- likely at or below this low end, not a Cincinnati/"
+        "Champaign/Somerville-scale reduction.",
     }
 
 
