@@ -97,10 +97,18 @@ def build_kauai_features() -> tuple[list, dict]:
     # transit mode (no rail), capped at the statute's FAR 4.0 base tier.
     tod_tract, tod_meta = bm.run_tod_scenario("kauai", mode="bus")
     feas = bm.tract_scaled_development_fee_reduction_feasibility()
+    # TOD models a rental apartment product (815 sqft unit size, mode-
+    # agnostic FAR standard -- never a for-sale townhome), so it gets its
+    # own rental feasibility test (added 2026-10-15 per the user's direct
+    # request), not the for-sale pro forma ADU/Missing Middle use. Prior
+    # to this, TOD was incorrectly gated on the SAME for-sale `feas` as
+    # ADU/Missing Middle while already using a RENTAL affordability gate
+    # below -- a real mismatch, fixed here.
+    tod_rental_feas = bm.tract_scaled_rental_feasibility("kauai")
 
     adu_gated = bm.apply_feasibility_gate(adu_tract, feas, "estimated_new_units")
     mm_gated = bm.apply_feasibility_gate(mm_tract, feas, "additional_estimated_units")
-    tod_gated = bm.apply_feasibility_gate(tod_tract, feas, "additional_estimated_units")
+    tod_gated = bm.apply_feasibility_gate(tod_tract, tod_rental_feas, "additional_estimated_units")
 
     afford_for_sale = bm.tract_affordability_constrained_capacity(sales_feasibility_df=feas, tenure="for_sale")
     afford_rental = bm.tract_affordability_constrained_capacity(tenure="rental")
@@ -264,11 +272,17 @@ def build_honolulu_features() -> tuple[list, dict]:
 
     **Update, 2026-10-15 (same day, later pass):** ADU, Missing Middle,
     and both TOD modes now also run through a real Honolulu-specific
-    feasibility and affordability gate --
+    feasibility and affordability gate. ADU/Missing Middle use
     tract_scaled_oahu_development_fee_reduction_feasibility() (the real
-    Iwilei-Kapalama O'ahu pro forma already sourced in build_model.py,
-    tract-scaled by each tract's own ACS median home value, same
-    mechanism as Kauai's gate) and
+    Iwilei-Kapalama O'ahu for-sale pro forma already sourced in
+    build_model.py, tract-scaled by each tract's own ACS median home
+    value, same mechanism as Kauai's gate). **Update, same day, final
+    pass:** TOD (both modes) now uses its own rental feasibility test,
+    tract_scaled_rental_feasibility() -- real Skyline TOD Feasibility
+    Study rent/vacancy/opex/cap-rate inputs, tract-scaled by ACS median
+    GROSS RENT rather than home value -- since TOD models a rental
+    apartment product, not the for-sale product ADU/Missing Middle do.
+    Both feasibility functions pair with
     honolulu_tract_affordability_constrained_capacity() (same required-
     income-vs-ACS-B19001-bracket mechanism, using Honolulu's own ZORI
     figure for TOD's rental product). Parking Reduction is NOT gated,
@@ -304,10 +318,22 @@ def build_honolulu_features() -> tuple[list, dict]:
     honolulu_feas = bm.tract_scaled_oahu_development_fee_reduction_feasibility(
         development_fee_usd=bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
     )
+    # TOD models a rental apartment product (815 sqft unit size, mode-
+    # agnostic FAR standard -- never a for-sale townhome/condo), so it
+    # gets its own rental feasibility test (added 2026-10-15 per the
+    # user's direct request), not the for-sale pro forma ADU/Missing
+    # Middle use. This is also the real fix behind the earlier "0 of 34
+    # rail-eligible tracts feasible" finding: that was the for-sale
+    # product's cost structure (calibrated to Honolulu's priciest
+    # neighborhoods) applied to a corridor that doesn't reach that price
+    # tier -- the rental gate below uses real rent-based revenue instead.
+    honolulu_tod_rental_feas = bm.tract_scaled_rental_feasibility(
+        "honolulu", development_fee_usd=bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
+    )
     adu_tract = bm.apply_feasibility_gate(adu_tract, honolulu_feas, "estimated_new_units")
     mm_tract = bm.apply_feasibility_gate(mm_tract, honolulu_feas, "additional_estimated_units")
-    tod_bus_tract = bm.apply_feasibility_gate(tod_bus_tract, honolulu_feas, "additional_estimated_units")
-    tod_rail_tract = bm.apply_feasibility_gate(tod_rail_tract, honolulu_feas, "additional_estimated_units")
+    tod_bus_tract = bm.apply_feasibility_gate(tod_bus_tract, honolulu_tod_rental_feas, "additional_estimated_units")
+    tod_rail_tract = bm.apply_feasibility_gate(tod_rail_tract, honolulu_tod_rental_feas, "additional_estimated_units")
 
     honolulu_afford_for_sale = bm.honolulu_tract_affordability_constrained_capacity(
         sales_feasibility_df=honolulu_feas, tenure="for_sale"

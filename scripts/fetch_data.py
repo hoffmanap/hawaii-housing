@@ -281,6 +281,174 @@ def fetch_acs_income_distribution(county: str, out_path: Path) -> int:
     return written
 
 
+# ACS 5-year detailed table B25063 (Gross Rent) -- the real distribution of
+# what renter-occupied units actually pay, confirmed against the Census
+# API's own variable listing 2026-10-15. Pulled per the user's 2026-10-15
+# request, same role for the rental TOD pro forma that Kauai's real sales
+# comps (process_sales_exports.py) play for the for-sale gate: a way to
+# check an ASSUMED market rent (e.g. the Skyline TOD Feasibility Study's
+# $3,200/mo figure) against what renters in a tract are REALLY paying,
+# rather than relying on the assumption alone.
+ACS_B25063_BRACKETS = [
+    ("B25063_003E", 0, 100),
+    ("B25063_004E", 100, 150),
+    ("B25063_005E", 150, 200),
+    ("B25063_006E", 200, 250),
+    ("B25063_007E", 250, 300),
+    ("B25063_008E", 300, 350),
+    ("B25063_009E", 350, 400),
+    ("B25063_010E", 400, 450),
+    ("B25063_011E", 450, 500),
+    ("B25063_012E", 500, 550),
+    ("B25063_013E", 550, 600),
+    ("B25063_014E", 600, 650),
+    ("B25063_015E", 650, 700),
+    ("B25063_016E", 700, 750),
+    ("B25063_017E", 750, 800),
+    ("B25063_018E", 800, 900),
+    ("B25063_019E", 900, 1_000),
+    ("B25063_020E", 1_000, 1_250),
+    ("B25063_021E", 1_250, 1_500),
+    ("B25063_022E", 1_500, 2_000),
+    ("B25063_023E", 2_000, 2_500),
+    ("B25063_024E", 2_500, 3_000),
+    ("B25063_025E", 3_000, 3_500),
+    ("B25063_026E", 3_500, None),  # "$3,500 or more" -- open-ended top bracket
+]
+# B25063_002E = total WITH cash rent (the base for the brackets above);
+# B25063_027E = "no cash rent" units, excluded -- not comparable to a
+# market-rent assumption.
+ACS_B25063_VARS = ["B25063_001E", "B25063_002E", "B25063_027E"] + [v for v, _, _ in ACS_B25063_BRACKETS]
+
+
+def fetch_acs_rent_distribution(county: str, out_path: Path) -> int:
+    """
+    Tract-level ACS 5-year gross-rent distribution (B25063) for one Hawaii
+    county -- 24 real cash-rent brackets plus totals. Same vintage/key
+    requirement as fetch_acs_income_distribution(); written wide (one
+    column per bracket, raw unit counts), same reasoning as that function.
+    """
+    key = os.environ.get("CENSUS_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "CENSUS_API_KEY environment variable not set -- get a free key at "
+            "https://api.census.gov/data/key_signup.html and set it in .env "
+            "(gitignored) or the environment before running this layer."
+        )
+    county_fips = COUNTY_FIPS[county]
+    get_vars = ",".join(["NAME", *ACS_B25063_VARS])
+    url = (
+        "https://api.census.gov/data/2022/acs/acs5"
+        f"?get={get_vars}&for=tract:*&in=state:15+county:{county_fips}&key={key}"
+    )
+    payload = _get_json_with_retries(url)
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError(f"Unexpected Census API response for {county}: {str(payload)[:300]}")
+    cols, rows = payload[0], payload[1:]
+
+    bracket_cols = [f"rent_{lo}_{hi if hi is not None else 'plus'}" for _, lo, hi in ACS_B25063_BRACKETS]
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["GEOID", "name", "total_units", "total_with_cash_rent", "total_no_cash_rent", *bracket_cols])
+        for row in rows:
+            record = dict(zip(cols, row))
+            geoid = record["state"] + record["county"] + record["tract"]
+            total = int(record["B25063_001E"])
+            if total == ACS_NULL_SENTINEL or total <= 0:
+                continue
+            with_cash_rent = int(record["B25063_002E"])
+            with_cash_rent = 0 if with_cash_rent == ACS_NULL_SENTINEL else with_cash_rent
+            no_cash_rent = int(record["B25063_027E"])
+            no_cash_rent = 0 if no_cash_rent == ACS_NULL_SENTINEL else no_cash_rent
+            bracket_counts = []
+            for var, _, _ in ACS_B25063_BRACKETS:
+                val = int(record[var])
+                bracket_counts.append(0 if val == ACS_NULL_SENTINEL else val)
+            writer.writerow([geoid, record["NAME"], total, with_cash_rent, no_cash_rent, *bracket_counts])
+            written += 1
+    return written
+
+
+# ACS 5-year detailed table B25118 (Tenure by Household Income) -- unlike
+# B19001 (ALL households, owners and renters blended), this table splits
+# household income by tenure, so the renter-occupied half gives a REAL
+# renter-specific income distribution. Pulled per the user's 2026-10-15
+# request: pairing this with B25063's real rent-paid distribution above
+# lets a rental affordability test use actual renter incomes, rather than
+# applying the same blended all-household income distribution (which
+# includes owner households who already bought and aren't shopping for a
+# new rental) to both the for-sale and rental product.
+ACS_B25118_RENTER_BRACKETS = [
+    ("B25118_015E", 0, 5_000),
+    ("B25118_016E", 5_000, 10_000),
+    ("B25118_017E", 10_000, 15_000),
+    ("B25118_018E", 15_000, 20_000),
+    ("B25118_019E", 20_000, 25_000),
+    ("B25118_020E", 25_000, 35_000),
+    ("B25118_021E", 35_000, 50_000),
+    ("B25118_022E", 50_000, 75_000),
+    ("B25118_023E", 75_000, 100_000),
+    ("B25118_024E", 100_000, 150_000),
+    ("B25118_025E", 150_000, None),  # "$150,000 or more" -- open-ended top bracket
+]
+ACS_B25118_VARS = ["B25118_001E", "B25118_014E"] + [v for v, _, _ in ACS_B25118_RENTER_BRACKETS]
+
+
+def fetch_acs_renter_income_distribution(county: str, out_path: Path) -> int:
+    """
+    Tract-level ACS 5-year RENTER-occupied household-income distribution
+    (B25118, renter-occupied half only) for one Hawaii county -- 11 real
+    income brackets (coarser than B19001's 16 since B25118 doesn't break
+    renter incomes down as finely) plus the renter-household total. Same
+    vintage/key requirement as the other ACS layers here.
+    """
+    key = os.environ.get("CENSUS_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "CENSUS_API_KEY environment variable not set -- get a free key at "
+            "https://api.census.gov/data/key_signup.html and set it in .env "
+            "(gitignored) or the environment before running this layer."
+        )
+    county_fips = COUNTY_FIPS[county]
+    get_vars = ",".join(["NAME", *ACS_B25118_VARS])
+    url = (
+        "https://api.census.gov/data/2022/acs/acs5"
+        f"?get={get_vars}&for=tract:*&in=state:15+county:{county_fips}&key={key}"
+    )
+    payload = _get_json_with_retries(url)
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError(f"Unexpected Census API response for {county}: {str(payload)[:300]}")
+    cols, rows = payload[0], payload[1:]
+
+    bracket_cols = [
+        f"renter_hh_income_{lo}_{hi if hi is not None else 'plus'}" for _, lo, hi in ACS_B25118_RENTER_BRACKETS
+    ]
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["GEOID", "name", "total_households", "total_renter_households", *bracket_cols])
+        for row in rows:
+            record = dict(zip(cols, row))
+            geoid = record["state"] + record["county"] + record["tract"]
+            total = int(record["B25118_001E"])
+            if total == ACS_NULL_SENTINEL or total <= 0:
+                continue
+            renter_total = int(record["B25118_014E"])
+            renter_total = 0 if renter_total == ACS_NULL_SENTINEL else renter_total
+            bracket_counts = []
+            for var, _, _ in ACS_B25118_RENTER_BRACKETS:
+                val = int(record[var])
+                bracket_counts.append(0 if val == ACS_NULL_SENTINEL else val)
+            writer.writerow([geoid, record["NAME"], total, renter_total, *bracket_counts])
+            written += 1
+    return written
+
+
 HDOT_HPMS_ROADS_LAYER_URL = "https://geodata.hawaii.gov/arcgis/rest/services/Transportation/MapServer/12"
 ARTERIAL_F_SYSTEM_VALUES = ("Principal Arterial", "Minor Arterial")
 
@@ -715,7 +883,8 @@ def main() -> None:
         choices=list(LAYERS)
         + [
             "building_footprints", "census_tracts", "census_places", "acs_commute_density",
-            "acs_income_distribution", "zillow_county_timeseries",
+            "acs_income_distribution", "acs_rent_distribution", "acs_renter_income_distribution",
+            "zillow_county_timeseries",
             "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops", "all",
         ],
         default="all",
@@ -740,6 +909,20 @@ def main() -> None:
         out_path = RAW_DIR / f"acs_income_distribution_{args.county}.csv"
         print(f"Fetching acs_income_distribution for {args.county} (Census API)...")
         count = fetch_acs_income_distribution(args.county, out_path)
+        print(f"  {count} tracts -> {out_path}")
+        return
+
+    if args.layer == "acs_rent_distribution":
+        out_path = RAW_DIR / f"acs_rent_distribution_{args.county}.csv"
+        print(f"Fetching acs_rent_distribution for {args.county} (Census API)...")
+        count = fetch_acs_rent_distribution(args.county, out_path)
+        print(f"  {count} tracts -> {out_path}")
+        return
+
+    if args.layer == "acs_renter_income_distribution":
+        out_path = RAW_DIR / f"acs_renter_income_distribution_{args.county}.csv"
+        print(f"Fetching acs_renter_income_distribution for {args.county} (Census API)...")
+        count = fetch_acs_renter_income_distribution(args.county, out_path)
         print(f"  {count} tracts -> {out_path}")
         return
 

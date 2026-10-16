@@ -1659,22 +1659,25 @@ def honolulu_tract_affordability_constrained_capacity(
 ) -> pd.DataFrame:
     """
     Honolulu analog of tract_affordability_constrained_capacity() below --
-    identical mechanism (required income backed out of the comps-implied
-    price or, for rental, the countywide ZORI figure; checked against the
-    tract's own real ACS B19001 income distribution), swapped to Honolulu's
-    income CSV and HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH for the rental
-    case. Added 2026-10-15, same reason as the feasibility function above.
+    required income backed out of the comps-implied price or, for rental,
+    the countywide ZORI figure. For `tenure="for_sale"`, checked against
+    the tract's real ACS B19001 (ALL households) income distribution, same
+    as before. **Updated 2026-10-15, per the user's direct request:** for
+    `tenure="rental"`, now checked against the tract's real ACS B25118
+    RENTER-OCCUPIED-ONLY income distribution instead of B19001's blended
+    all-household one -- the right population for a rental affordability
+    question, since B19001 includes owner households who already bought
+    and aren't shopping for a new rental unit.
     """
-    path = income_csv or (RAW_DIR / "acs_income_distribution_honolulu.csv")
-    if not path.exists():
-        raise RuntimeError(
-            f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
-            "--county honolulu` first (needs CENSUS_API_KEY)."
-        )
-    income = pd.read_csv(path, dtype={"GEOID": str})
-
     rows = []
     if tenure == "for_sale":
+        path = income_csv or (RAW_DIR / "acs_income_distribution_honolulu.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
+                "--county honolulu` first (needs CENSUS_API_KEY)."
+            )
+        income = pd.read_csv(path, dtype={"GEOID": str})
         if sales_feasibility_df is None:
             raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
         feas = sales_feasibility_df.copy()
@@ -1695,17 +1698,29 @@ def honolulu_tract_affordability_constrained_capacity(
                 }
             )
     elif tenure == "rental":
+        path = income_csv or (RAW_DIR / "acs_renter_income_distribution_honolulu.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_renter_income_distribution "
+                "--county honolulu` first (needs CENSUS_API_KEY)."
+            )
+        renter_income = pd.read_csv(path, dtype={"GEOID": str})
         required_income = _required_income_for_rent(HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH)
-        for _, tract in income.iterrows():
-            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
-            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+        for _, tract in renter_income.iterrows():
+            if tract["total_renter_households"] <= 0:
+                continue
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B25118_RENTER_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(
+                bracket_counts, tract["total_renter_households"], required_income,
+                brackets=ACS_B25118_RENTER_BRACKETS_FOR_MODEL,
+            )
             rows.append(
                 {
                     "GEOID": tract["GEOID"],
                     "tenure": tenure,
                     "price_or_rent_usd": HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH,
                     "required_income_usd": round(required_income),
-                    "total_households": int(tract["total_households"]),
+                    "total_households": int(tract["total_renter_households"]),
                     "pct_households_affording": round(pct, 1),
                 }
             )
@@ -1967,23 +1982,41 @@ def _affordable_sale_price_for_income(annual_income_usd: float) -> float:
     return loan_amount / (1 - HAWAII_MORTGAGE_DOWN_PAYMENT_PCT)
 
 
-def _pct_households_above_income(bracket_counts: dict, total_households: int, required_income: float) -> float:
+def _pct_households_above_income(
+    bracket_counts: dict,
+    total_households: int,
+    required_income: float,
+    brackets: list | None = None,
+) -> float:
     """
     Real percentage of a tract's households with income >= required_income,
-    computed from ACS B19001's 16 income brackets (fetch_data.fetch_acs_
-    income_distribution()) rather than a median-based yes/no. Households in
-    brackets entirely above the threshold count fully; the one bracket the
-    threshold falls inside is split by linear interpolation (assumes income
-    is spread uniformly within that bracket -- a standard, stated
-    simplification, not a claim of the true within-bracket distribution).
-    The open-ended top bracket ($200,000+) counts fully if the threshold is
-    below $200,000, or not at all if the threshold itself is >= $200,000
-    (no upper bound to interpolate against).
+    computed from a real ACS income-bracket distribution rather than a
+    median-based yes/no. Households in brackets entirely above the
+    threshold count fully; the one bracket the threshold falls inside is
+    split by linear interpolation (assumes income is spread uniformly
+    within that bracket -- a standard, stated simplification, not a claim
+    of the true within-bracket distribution). The open-ended top bracket
+    counts fully if the threshold is below its floor, or not at all
+    otherwise (no upper bound to interpolate against).
+
+    `brackets` defaults to ACS_B19001_BRACKETS_FOR_MODEL (ALL households,
+    16 brackets) for backward compatibility, but callers using a
+    different bracket set -- e.g. ACS_B25118_RENTER_BRACKETS_FOR_MODEL
+    (renter-occupied households only, 11 coarser brackets) -- MUST pass
+    it explicitly. **Bug fixed 2026-10-15:** this function used to
+    hardcode ACS_B19001_BRACKETS_FOR_MODEL regardless of what
+    `bracket_counts` actually held, so passing renter-income brackets
+    (different column names and boundaries) silently matched zero
+    brackets via `.get(col, 0)` and returned 0.0 for every tract --
+    caught when Honolulu's and Kauai's rental affordability both came
+    back exactly 0% across every tract after switching to the real
+    renter-income distribution, which is implausible on its face.
     """
     if total_households <= 0:
         return 0.0
+    brackets = brackets or ACS_B19001_BRACKETS_FOR_MODEL
     qualifying = 0.0
-    for col, lo, hi in ACS_B19001_BRACKETS_FOR_MODEL:
+    for col, lo, hi in brackets:
         count = bracket_counts.get(col, 0)
         if hi is None:  # open-ended top bracket
             if required_income <= lo:
@@ -2019,6 +2052,122 @@ ACS_B19001_BRACKETS_FOR_MODEL = [
     ("hh_income_150000_200000", 150_000, 200_000),
     ("hh_income_200000_plus", 200_000, None),
 ]
+
+# Mirrors fetch_data.ACS_B25118_RENTER_BRACKETS -- a REAL renter-occupied-
+# only household income distribution (Census table B25118), fetched
+# 2026-10-15 per the user's direct request. Unlike ACS_B19001_BRACKETS_FOR_
+# MODEL above (ALL households, owners and renters blended), this is the
+# income distribution of households who actually rent -- the right
+# population to check rental affordability against, since a blended
+# distribution includes owner households who already bought and aren't
+# shopping for a rental unit.
+ACS_B25118_RENTER_BRACKETS_FOR_MODEL = [
+    ("renter_hh_income_0_5000", 0, 5_000),
+    ("renter_hh_income_5000_10000", 5_000, 10_000),
+    ("renter_hh_income_10000_15000", 10_000, 15_000),
+    ("renter_hh_income_15000_20000", 15_000, 20_000),
+    ("renter_hh_income_20000_25000", 20_000, 25_000),
+    ("renter_hh_income_25000_35000", 25_000, 35_000),
+    ("renter_hh_income_35000_50000", 35_000, 50_000),
+    ("renter_hh_income_50000_75000", 50_000, 75_000),
+    ("renter_hh_income_75000_100000", 75_000, 100_000),
+    ("renter_hh_income_100000_150000", 100_000, 150_000),
+    ("renter_hh_income_150000_plus", 150_000, None),
+]
+
+# Mirrors fetch_data.ACS_B25063_BRACKETS -- the REAL distribution of what
+# renter-occupied units currently pay (Census table B25063), fetched
+# 2026-10-15 per the user's direct request, as a check on the assumed
+# market rent used in a rental pro forma (e.g. the Skyline TOD Feasibility
+# Study's $3,200/mo figure) -- the same role Kauai's real sales comps play
+# for the for-sale feasibility gate.
+ACS_B25063_BRACKETS_FOR_MODEL = [
+    ("rent_0_100", 0, 100),
+    ("rent_100_150", 100, 150),
+    ("rent_150_200", 150, 200),
+    ("rent_200_250", 200, 250),
+    ("rent_250_300", 250, 300),
+    ("rent_300_350", 300, 350),
+    ("rent_350_400", 350, 400),
+    ("rent_400_450", 400, 450),
+    ("rent_450_500", 450, 500),
+    ("rent_500_550", 500, 550),
+    ("rent_550_600", 550, 600),
+    ("rent_600_650", 600, 650),
+    ("rent_650_700", 650, 700),
+    ("rent_700_750", 700, 750),
+    ("rent_750_800", 750, 800),
+    ("rent_800_900", 800, 900),
+    ("rent_900_1000", 900, 1_000),
+    ("rent_1000_1250", 1_000, 1_250),
+    ("rent_1250_1500", 1_250, 1_500),
+    ("rent_1500_2000", 1_500, 2_000),
+    ("rent_2000_2500", 2_000, 2_500),
+    ("rent_2500_3000", 2_500, 3_000),
+    ("rent_3000_3500", 3_000, 3_500),
+    ("rent_3500_plus", 3_500, None),
+]
+
+
+def pct_renters_currently_paying_at_or_above(
+    county: str,
+    threshold_rent_usd: float,
+    rent_csv: Path | None = None,
+) -> pd.DataFrame:
+    """
+    Real, honest cross-check on an ASSUMED market rent (e.g. the Skyline
+    TOD Feasibility Study's $3,200/mo Honolulu figure, or
+    KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH) against what renter-occupied units
+    in each tract are REALLY paying today (ACS B25063), added 2026-10-15
+    per the user's direct request. This does NOT feed into the feasibility
+    gate -- a market-rent assumption for NEW construction is expected to
+    sit above what the existing (often older, sometimes rent-stabilized or
+    long-tenancy) rental stock charges on average. It is a transparency
+    check: how far above today's real rents is the assumption actually
+    sitting, tract by tract and countywide.
+
+    The open-ended top bracket ($3,500+ or more) is NOT interpolated --
+    there's no real data on its internal distribution, so a threshold that
+    falls INSIDE that open bracket (as Kauai's $3,708 ZORI figure does)
+    returns the share at or above the bracket's own $3,500 floor as an
+    upper-bound estimate, flagged via `threshold_above_top_bracket_floor`,
+    rather than guessing a finer split within it.
+    """
+    path = rent_csv or (RAW_DIR / f"acs_rent_distribution_{county}.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `fetch_data.py --layer acs_rent_distribution "
+            f"--county {county}` first (needs CENSUS_API_KEY)."
+        )
+    rent = pd.read_csv(path, dtype={"GEOID": str})
+
+    rows = []
+    for _, tract in rent.iterrows():
+        total = tract["total_with_cash_rent"]
+        if total <= 0:
+            continue
+        qualifying = 0.0
+        for col, lo, hi in ACS_B25063_BRACKETS_FOR_MODEL:
+            count = tract[col]
+            if hi is None:
+                if lo >= threshold_rent_usd:
+                    qualifying += count
+                # threshold falls inside the open top bracket -- no finer
+                # split available; counted as an upper bound, not interpolated.
+                continue
+            if lo >= threshold_rent_usd:
+                qualifying += count
+            elif hi > threshold_rent_usd:
+                qualifying += count * (hi - threshold_rent_usd) / (hi - lo)
+        rows.append(
+            {
+                "GEOID": tract["GEOID"],
+                "total_renter_units_with_cash_rent": int(total),
+                "pct_currently_paying_at_or_above": round(100 * qualifying / total, 1),
+                "threshold_above_top_bracket_floor": threshold_rent_usd > 3_500,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def income_bracket_vs_affordable_stock_share(
@@ -2085,6 +2234,151 @@ def income_bracket_vs_affordable_stock_share(
     return pd.DataFrame(rows)
 
 
+# Real rental-product valuation inputs, re-fetched and cross-checked
+# 2026-10-15 per the user's direct request ("re fetch but also check to
+# see cap rates for this area"). Re-confirmed Appendix B of the Skyline
+# TOD Feasibility Study, Final Deliverable (July 2026) -- the only page
+# this project has found with a real, Hawaii-specific rental cap rate and
+# NOI-to-value mechanism (see data/DATA_SOURCES.md for the full citation):
+#   - Market Rate Rentals: $3,200/mo rent, 2.5% vacancy, 40% opex ratio,
+#     4.5% cap rate, 3.0% rent growth, $1,400/unit/yr other (sewer)
+#     revenue -> the study's own computed $574,080/unit stabilized value.
+#   - Cross-check, same source, p.26: the Study Area's OWN actual 2025
+#     multifamily cap rate was 4.4%, i.e. the 4.5% assumption is close to
+#     (not invented independently of) a real observed local figure.
+#   - Independent cross-check attempted against a second source
+#     (apartmentloanstore.com, "Cap Rates in Honolulu, Hawaii," pulled
+#     2026-10-15): Class A metro mid/high-rise multifamily 4.70%, Class B
+#     5.10%, Class C 5.64% -- same order of magnitude and direction
+#     (new/Class-A product trades tighter, closer to the Skyline figure)
+#     but this page names no underlying survey or methodology, so it's
+#     treated as weak corroboration, not a primary citation. A gated CBRE
+#     H1 2025 Cap Rate Survey PDF and Marcus & Millichap's Honolulu office
+#     page were also checked; neither yields a usable Honolulu-specific
+#     figure (CBRE's survey requires a login/download not reachable here;
+#     Marcus & Millichap's page has no Hawaii market data).
+#   - No developer profit margin or required yield-on-cost spread for a
+#     RENTAL deal is stated anywhere in the Skyline study (re-confirmed on
+#     this re-fetch) -- unlike the for-sale pro forma's cited 15%-of-
+#     sale-price margin, there is no Hawaii-sourced rental equivalent.
+#     tract_scaled_rental_feasibility() below therefore computes excess
+#     value WITHOUT subtracting a required profit margin -- a real,
+#     stated gap, not an invented substitute.
+SKYLINE_TOD_STUDY_RENTAL_INPUTS = {
+    "rent_usd_per_month": 3_200,
+    "other_revenue_usd_per_unit_annual": 1_400,
+    "vacancy_pct": 0.025,
+    "opex_ratio_pct": 0.40,
+    "cap_rate_pct": 0.045,
+    "rent_growth_pct": 0.03,
+    # The study's own computed output, used directly as the reference
+    # "stabilized value" rather than re-derived from the inputs above --
+    # the appendix text available to this project describes the inputs
+    # but not the exact NOI-assembly formula (how vacancy/opex/other
+    # revenue combine), and reverse-engineering a formula that happens to
+    # land on $574,080 risks silently fabricating a different mechanism
+    # under the same label. Using the source's own stated result avoids that.
+    "stabilized_value_per_unit_usd": 574_080,
+    "source": "Skyline TOD Feasibility Study, Final Deliverable (July 2026), State of Hawaii "
+    "DBEDT OPSD -- Appendix B, Detailed Assumptions, Market Rate Rentals (p.88-93); cap rate "
+    "cross-checked against the Study Area's own real 2025 multifamily cap rate of 4.4% (p.26).",
+}
+
+KAUAI_COUNTYWIDE_MEDIAN_GROSS_RENT_USD = 1_733  # ACS B25064, tract median of medians, 16 of 17 tracts
+HONOLULU_COUNTYWIDE_MEDIAN_GROSS_RENT_USD = 2_071  # ACS B25064, tract median of medians, 307 of 321 tracts
+
+
+def tract_scaled_rental_feasibility(
+    county: str,
+    acs_commute_density_csv: Path | None = None,
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+) -> pd.DataFrame:
+    """
+    Real rental-product feasibility test, added 2026-10-15 per the user's
+    direct request, mirroring the for-sale tract-scaled feasibility
+    functions above but with a rental-specific mechanism throughout:
+
+    - REVENUE: SKYLINE_TOD_STUDY_RENTAL_INPUTS's $574,080/unit stabilized
+      value (rent -> NOI -> cap-rate-implied value, all real Hawaii
+      inputs), scaled by each tract's own real ACS B25064 median gross
+      rent relative to the countywide median -- NOT by home value (the
+      for-sale gate's scaling driver), since a tract's rent level, not
+      its home-sale value, is the economically relevant driver of a
+      rental product's achievable revenue.
+    - COST: each county's own already-sourced hard/land cost figures
+      (KAUAI_LIHUE_PRO_FORMA_INPUTS / OAHU_IWILEI_KAPALAMA_PRO_FORMA_
+      INPUTS, "lowrise_for_sale" row -- the only product each table
+      prices), held fixed across tracts, same stated asymmetry as the
+      for-sale gates. Unit size is MULTIFAMILY_RENTAL_UNIT_SIZE_GSF (815
+      sqft, the real RentCafe/Yardi Matrix rental-apartment average) --
+      NOT the for-sale tables' own 840 sqft townhome/lowrise-for-sale
+      unit size, since this is a rental product.
+    - NO developer profit margin is subtracted (see
+      SKYLINE_TOD_STUDY_RENTAL_INPUTS's comment) -- `excess_value_usd`
+      here is therefore a more PERMISSIVE bar than the for-sale gates'
+      (which do subtract one), stated plainly rather than silently
+      applying a mismatched for-sale margin to a rental deal.
+    """
+    cfg = {
+        "kauai": {
+            "acs_path": RAW_DIR / "acs_commute_density_kauai.csv",
+            "hard_cost_per_gsf_usd": KAUAI_LIHUE_PRO_FORMA_INPUTS["lowrise_for_sale"]["hard_cost_per_gsf_usd"],
+            "soft_cost_pct_of_hard": KAUAI_LIHUE_PRO_FORMA_INPUTS["lowrise_for_sale"]["soft_cost_pct_of_hard"],
+            "land_price_per_gsf_usd": KAUAI_LIHUE_LAND_PRICE_PER_BUILDING_GSF_USD,
+            "financing": KAUAI_LIHUE_FINANCING,
+            "countywide_median_gross_rent_usd": KAUAI_COUNTYWIDE_MEDIAN_GROSS_RENT_USD,
+        },
+        "honolulu": {
+            "acs_path": RAW_DIR / "acs_commute_density_honolulu.csv",
+            "hard_cost_per_gsf_usd": OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS["lowrise_for_sale"]["hard_cost_per_gsf_usd"],
+            "soft_cost_pct_of_hard": OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS["lowrise_for_sale"]["soft_cost_pct_of_hard"],
+            "land_price_per_gsf_usd": OAHU_IWILEI_KAPALAMA_LAND_PRICE_PER_BUILDING_GSF_USD,
+            "financing": KAUAI_LIHUE_FINANCING,  # shared across all 4 TOD sites in the source table
+            "countywide_median_gross_rent_usd": HONOLULU_COUNTYWIDE_MEDIAN_GROSS_RENT_USD,
+        },
+    }[county]
+
+    path = acs_commute_density_csv or cfg["acs_path"]
+    if not path.exists():
+        raise RuntimeError(f"{path} not found -- run `fetch_data.py --layer acs_commute_density --county {county}` first.")
+    acs = pd.read_csv(path, dtype={"GEOID": str})
+    acs = acs.dropna(subset=["median_gross_rent_usd"]).copy()
+
+    unit_size = MULTIFAMILY_RENTAL_UNIT_SIZE_GSF
+    hard_cost = unit_size * cfg["hard_cost_per_gsf_usd"]
+    soft_cost = hard_cost * cfg["soft_cost_pct_of_hard"]
+    land_cost = unit_size * cfg["land_price_per_gsf_usd"]
+    cost_before_financing_and_fee = hard_cost + soft_cost + land_cost
+
+    fin = cfg["financing"]
+    loan_amount = cost_before_financing_and_fee * fin["loan_to_cost"]
+    construction_years = fin["construction_period_months"] / 12
+    financing_interest = loan_amount * fin["construction_interest_rate"] * construction_years * 0.5
+    financing_fees = loan_amount * (fin["construction_loan_fee_pct"] + fin["permanent_loan_fee_pct"])
+    financing_cost = financing_interest + financing_fees
+
+    total_development_cost = cost_before_financing_and_fee + financing_cost + development_fee_usd
+    reference_value = SKYLINE_TOD_STUDY_RENTAL_INPUTS["stabilized_value_per_unit_usd"]
+
+    rows = []
+    for _, tract in acs.iterrows():
+        scale = tract["median_gross_rent_usd"] / cfg["countywide_median_gross_rent_usd"]
+        scaled_value = reference_value * scale
+        excess_value = scaled_value - total_development_cost
+        rows.append(
+            {
+                "GEOID": str(tract["GEOID"]),
+                "median_gross_rent_usd": tract["median_gross_rent_usd"],
+                "gross_rent_scale_vs_countywide": round(scale, 3),
+                "scaled_stabilized_value_usd": round(scaled_value),
+                "total_development_cost_usd": round(total_development_cost),
+                "excess_value_usd": round(excess_value),
+                "feasible": excess_value >= 0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def tract_affordability_constrained_capacity(
     income_csv: Path | None = None,
     sales_feasibility_df: pd.DataFrame | None = None,
@@ -2112,23 +2406,27 @@ def tract_affordability_constrained_capacity(
     (KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH) rather than a tract-scaled rent --
     no tract-level Kauai rent source exists (see DATA_SOURCES.md's Zillow
     section), so every tract gets the same required-income bar for rental
-    product; only the income distribution varies by tract.
+    product. **Updated 2026-10-15, per the user's direct request:** checked
+    against the tract's real ACS B25118 RENTER-OCCUPIED-ONLY income
+    distribution instead of B19001's blended all-household one -- the
+    right population for a rental affordability question, since B19001
+    includes owner households who already bought and aren't shopping for
+    a new rental unit.
 
     Returns one row per tract: `required_income_usd`, `pct_households_affording`,
     and (where `sales_feasibility_df` is for_sale) the comps price used.
     This is a PERCENTAGE, not a unit count -- apply_affordability_gate()
     below is what multiplies it onto a scenario's unit estimate.
     """
-    path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
-    if not path.exists():
-        raise RuntimeError(
-            f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
-            "--county kauai` first (needs CENSUS_API_KEY)."
-        )
-    income = pd.read_csv(path, dtype={"GEOID": str})
-
     rows = []
     if tenure == "for_sale":
+        path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
+                "--county kauai` first (needs CENSUS_API_KEY)."
+            )
+        income = pd.read_csv(path, dtype={"GEOID": str})
         if sales_feasibility_df is None:
             raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
         feas = sales_feasibility_df.copy()
@@ -2149,17 +2447,29 @@ def tract_affordability_constrained_capacity(
                 }
             )
     elif tenure == "rental":
+        path = income_csv or (RAW_DIR / "acs_renter_income_distribution_kauai.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_renter_income_distribution "
+                "--county kauai` first (needs CENSUS_API_KEY)."
+            )
+        renter_income = pd.read_csv(path, dtype={"GEOID": str})
         required_income = _required_income_for_rent(KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH)
-        for _, tract in income.iterrows():
-            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
-            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+        for _, tract in renter_income.iterrows():
+            if tract["total_renter_households"] <= 0:
+                continue
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B25118_RENTER_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(
+                bracket_counts, tract["total_renter_households"], required_income,
+                brackets=ACS_B25118_RENTER_BRACKETS_FOR_MODEL,
+            )
             rows.append(
                 {
                     "GEOID": tract["GEOID"],
                     "tenure": tenure,
                     "price_or_rent_usd": KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH,
                     "required_income_usd": round(required_income),
-                    "total_households": int(tract["total_households"]),
+                    "total_households": int(tract["total_renter_households"]),
                     "pct_households_affording": round(pct, 1),
                 }
             )
