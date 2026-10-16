@@ -325,6 +325,21 @@ KAUAI_BUS_GTFS_URL = (
     "ntd-90237-202610120135.zip"
 )
 
+# Honolulu's combined GTFS feed (MobilityDatabase mdb-2350, discovered
+# 2026-10-15 via thebus.org's producer URL / Pacific-Honolulu timezone
+# match) carries BOTH TheBus (agency_id "TheBus") and HART's Skyline rail
+# (agency_id "Skyline", route_id 181, route_type 1 = subway/metro) in one
+# feed -- real, live schedule data for both modes, not two separately-
+# sourced datasets. Skyline's 13 scheduled stops match the 13 "open"
+# stations already confirmed via the ArcGIS station-footprint layer
+# (data/reference/hart_station_centroids.csv), to within ~0.001 degrees --
+# i.e. this is the stations that actually have trains running today, not
+# the full 21-station planned alignment.
+HONOLULU_TRANSIT_GTFS_URL = (
+    "https://files.mobilitydatabase.org/mdb-2350/mdb-2350-202610100134/"
+    "mdb-2350-202610100134.zip"
+)
+
 
 def fetch_kauai_bus_major_stops(out_path: Path) -> int:
     """
@@ -402,6 +417,87 @@ def fetch_kauai_bus_major_stops(out_path: Path) -> int:
                 [
                     stop_id, stop["stop_name"], stop["stop_lat"], stop["stop_lon"],
                     trips_by_stop.get(stop_id, 0), n, n >= 2,
+                ]
+            )
+            written += 1
+    return written
+
+
+def fetch_honolulu_major_transit_stops(out_path: Path) -> int:
+    """
+    Downloads Honolulu's combined GTFS feed (MobilityDatabase mdb-2350,
+    thebus.org) and derives "major transit stop" lists for BOTH modes it
+    contains -- TheBus (agency_id "TheBus") and HART's Skyline rail
+    (agency_id "Skyline") -- using the SAME methodology as Kauai's
+    fetch_kauai_bus_major_stops() (2+ distinct weekday routes = major),
+    so eligibility is computed identically regardless of mode or county.
+    Per the user's 2026-10-15 correction: TOD eligibility must be
+    implemented consistently across modes, with a toggle choosing which
+    stop dataset to buffer around, not two different ad hoc mechanisms.
+
+    Each output row carries a "mode" column ("bus" or "rail") so
+    build_model.tod_eligible_parcels() can filter by the mode a user
+    selects. Rail gets its own n_routes/is_major_stop columns too, even
+    though Skyline is a single line (route_id 181) -- every Skyline stop
+    trivially has n_routes=1, so "is_major_stop" for rail is NOT the
+    eligibility test (every served Skyline station matters equally); the
+    real rail-specific distinction (LPA-eligible for the 6.0/7.0 FAR
+    tiers) is applied in build_model.py, not here.
+    """
+    import io
+    import zipfile
+
+    req = urllib.request.Request(HONOLULU_TRANSIT_GTFS_URL, headers={"User-Agent": "hawaii-housing-model/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        content = resp.read()
+    zf = zipfile.ZipFile(io.BytesIO(content))
+
+    def read_csv_rows(name: str) -> list[dict]:
+        with zf.open(name) as fh:
+            return list(csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig")))
+
+    stops = {r["stop_id"]: r for r in read_csv_rows("stops.txt")}
+    routes = {r["route_id"]: r for r in read_csv_rows("routes.txt")}
+    calendar = read_csv_rows("calendar.txt")
+    weekday_service_ids = {
+        r["service_id"] for r in calendar
+        if r["monday"] == "1" and r["friday"] == "1"
+    }
+    trips = read_csv_rows("trips.txt")
+    weekday_trip_ids = {r["trip_id"] for r in trips if r["service_id"] in weekday_service_ids}
+    stop_times = read_csv_rows("stop_times.txt")
+    trip_route = {r["trip_id"]: r["route_id"] for r in trips}
+
+    routes_by_stop: dict[str, set] = {}
+    trips_by_stop: dict[str, int] = {}
+    mode_by_stop: dict[str, str] = {}
+    for st in stop_times:
+        if st["trip_id"] not in weekday_trip_ids:
+            continue
+        sid = st["stop_id"]
+        route_id = trip_route.get(st["trip_id"])
+        routes_by_stop.setdefault(sid, set()).add(route_id)
+        trips_by_stop[sid] = trips_by_stop.get(sid, 0) + 1
+        agency_id = routes.get(route_id, {}).get("agency_id")
+        mode_by_stop[sid] = "rail" if agency_id == "Skyline" else "bus"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            ["stop_id", "stop_name", "stop_lat", "stop_lon", "mode", "weekday_trips", "n_routes", "is_major_stop"]
+        )
+        for stop_id, n_routes in sorted(routes_by_stop.items(), key=lambda kv: -trips_by_stop.get(kv[0], 0)):
+            stop = stops.get(stop_id)
+            if not stop or not stop.get("stop_lat") or not stop.get("stop_lon"):
+                continue
+            n = len(n_routes)
+            mode = mode_by_stop.get(stop_id, "bus")
+            writer.writerow(
+                [
+                    stop_id, stop["stop_name"], stop["stop_lat"], stop["stop_lon"],
+                    mode, trips_by_stop.get(stop_id, 0), n, n >= 2,
                 ]
             )
             written += 1
@@ -620,7 +716,7 @@ def main() -> None:
         + [
             "building_footprints", "census_tracts", "census_places", "acs_commute_density",
             "acs_income_distribution", "zillow_county_timeseries",
-            "kauai_bus_major_stops", "kauai_arterial_roads", "all",
+            "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops", "all",
         ],
         default="all",
         help="Which named layer to fetch (default: all)",
@@ -659,6 +755,13 @@ def main() -> None:
         print("Fetching kauai_arterial_roads (HDOT HPMS Roads, Principal/Minor Arterial)...")
         count = fetch_kauai_arterial_roads(out_path)
         print(f"  {count} segments -> {out_path}")
+        return
+
+    if args.layer == "honolulu_major_transit_stops":
+        out_path = RAW_DIR / "honolulu_major_transit_stops.csv"
+        print("Fetching honolulu_major_transit_stops (TheBus + Skyline GTFS, MobilityDatabase)...")
+        count = fetch_honolulu_major_transit_stops(out_path)
+        print(f"  {count} stops -> {out_path}")
         return
 
     if args.layer in ("building_footprints", "all"):

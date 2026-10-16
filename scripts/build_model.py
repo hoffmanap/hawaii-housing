@@ -724,88 +724,69 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     return tract_rollup, metadata
 
 
-# Transit-Oriented Density -- "major transit stop" definition and proximity
-# threshold, per the Challenge benchmark's own requirement to define and
-# justify both.
+# Transit-Oriented Density -- REBUILT 2026-10-15 on the actual statutory
+# eligibility text, per the user's correction: the prior version used two
+# different ad hoc mechanisms per county (Kauai: bus-stop-AND-arterial
+# buffer at 3/4 mile; Honolulu: rail-only buffer at 3/4 mile) and a
+# user-set FAR slider disconnected from real distance. Neither matches
+# what HB1409 (2025)/Act 159, HRS 206E-246(j) actually says, and the two
+# counties weren't even using the same rule.
 #
-# MAJOR TRANSIT STOP: Kauai has no rail or BRT. Per the user's explicit
-# correction (2026-10-14) to an earlier draft that scoped this scenario to
-# Honolulu's rail stations -- "there's nothing that says it has to be built
-# around transit stations. If the counties have rapid transit we could base
-# it around bus lines" -- this scenario is built on Kauai Bus's real,
-# actively-maintained GTFS feed (MobilityDatabase, NTD ID 90237; see
-# fetch_kauai_bus_major_stops() in fetch_data.py) instead. "Major" = served
-# by 2+ distinct routes on a weekday: Kauai Bus's network is a hub-and-spoke
-# of single-route shuttle loops feeding a handful of mainline/transfer
-# stops, so route-count is a clean, real, data-driven line between a
-# trunk/transfer stop (more destinations reachable, overlapping headways)
-# and a stop that's only ever served by one shuttle's own loop. 58 of 126
-# weekday-served stops qualify as of this feed.
+# WHAT THE STATUTE ACTUALLY SAYS (fetched directly from the bill text and
+# HRS 226-63(d), which 206E-246(j) incorporates by reference):
+#   - The statute is MODE-AGNOSTIC. It never says "rail" or "bus" --
+#     only "public transit systems," "transit hub or transit station."
+#   - BASE tier (FAR >= 4.0): applies within a "county-designated TOD
+#     area," which 226-63(d) itself defines, absent a county's own
+#     designation, as "lands within a one-half-mile radius of a transit
+#     hub or transit station" -- ANY mode, ANY stop.
+#   - HIGHER tiers (FAR >= 6.0 within 1/2 mile, >= 7.0 within 1/4 mile):
+#     apply only near "a station of a LOCALLY PREFERRED ALTERNATIVE for
+#     a mass transit project." "Locally preferred alternative" (LPA) is
+#     an FTA planning term for a formally adopted, funded capital transit
+#     project -- in Hawaii today, that is HART's Skyline rail project and
+#     nothing else. A regular TheBus or Kauai Bus stop is a real transit
+#     station (so it reaches the BASE tier), but it is not part of an
+#     adopted LPA project, so it cannot reach the 6.0/7.0 tiers under a
+#     plain reading of the statute.
 #
-# PROXIMITY THRESHOLD: three-quarters of a mile -- not Honolulu's own
-# rail-specific half-mile City TOD Special District standard
-# (planning.hawaii.gov/lud/state-tod/; Honolulu RO section 21-9.100-9's
-# "TOD Station Area," ~0.5 mi of a RAIL station), but the threshold OPSD's
-# own statewide strategy report actually uses to map TOD areas around BOTH
-# rail AND bus routes/stations/hubs (OPSD, "Toward a Transit-Oriented
-# Development Housing Investment Strategy," Dec. 2023, SCR162 report) --
-# the one real Hawaii standard found that is explicitly mode-agnostic,
-# rather than a rail standard stretched to cover buses. Switched from the
-# half-mile figure used in the previous pass for exactly this reason.
-THREE_QUARTER_MILE_METERS = 1_207.008
+# ONE eligibility mechanism, mode-selectable, not two different ones:
+# tod_eligible_parcels(county, mode) buffers around whichever real GTFS-
+# derived stop dataset matches `mode` ("bus" or "rail") for that county,
+# using the SAME half-mile/quarter-mile radii regardless of mode or
+# county. "rail" is only available where an LPA project actually exists
+# (Honolulu's Skyline) and reaches the 6.0/7.0 tiers; "bus" is available
+# everywhere TheBus/Kauai Bus GTFS data exists and is capped at the 4.0
+# base tier, per the LPA restriction above.
+HALF_MILE_METERS = 804.672
+QUARTER_MILE_METERS = 402.336
 
-# REFORM DENSITY -- superseded again, 2026-10-15, by an actual ENACTED
-# Hawaii statute the user supplied: HB1409 (2025), Act 159, HRS section
-# 206E-246(j), defining "transit-supportive density" as a floor area ratio
-# (FAR), not a units/acre figure or a multiplier on existing zoning:
-#   - Base: FAR >= 4.0 for all uses permitted in a county-designated TOD
-#     area or under underlying county zoning (whichever is higher).
-#   - Within 1/2 mile of a "locally preferred alternative" transit
-#     station: FAR >= 6.0.
-#   - Within 1/4 mile of such a station: the GREATER of 7.0, the max FAR
-#     under an adopted TOD special district, or the max FAR under an
-#     applicable TOD plan.
-# The companion bill, SB1614, carried the identical FAR tiers but died in
-# committee (carried over to 2026) -- HB1409 is the one that actually
-# became law, so its figures are what this project uses. Wording is
-# mode-agnostic ("mass transit project," "public transit systems," never
-# "rail"), consistent with this scenario's bus-corridor scope, though the
-# higher 6.0/7.0 tiers are gated on a "locally preferred alternative" --
-# a term the statute doesn't define, so whether a bus corridor can reach
-# those tiers is genuinely untested, not confirmed here either way.
-#
-# Per the user's explicit design decision (2026-10-15): rather than
-# computing per-parcel distance tiers automatically, FAR is exposed as a
-# single slider value a user sets directly -- defaulting to the statute's
-# BASE tier (4.0), since the 3/4-mile eligibility buffer corresponds to
-# the broader "county-designated TOD area," not the inner 1/2- or
-# 1/4-mile station tiers. A user who wants to model being closer to a
-# stop can raise the slider toward 6.0 or 7.0 themselves.
-#
-# FAR -> units: floor_area_sqft = parcel_area_sqft * FAR; units =
-# floor_area_sqft / TOD_UNIT_SIZE_GSF. Reuses the lowrise product's unit
-# size already sourced in KAUAI_LIHUE_PRO_FORMA_INPUTS (840 sqft, from the
-# Lihu'e OPSD pro forma) as the representative TOD-area unit size -- a
-# stated assumption, not a size specific to this FAR tier (no Hawaii
-# source found for a TOD-specific unit size).
-#
-# Unlike the ADU/Missing Middle density rule, the statute applies "for
-# all uses permitted ... under underlying county zoning" -- i.e. it does
-# NOT carve out non-R-numbered zones the way this project's density_per_
-# acre rule does, so AG/O/CN/CG parcels are no longer excluded from TOD
-# capacity (a real scope change from the previous multiplier version).
 TOD_FAR_BASE = 4.0
 TOD_FAR_HALF_MILE = 6.0
 TOD_FAR_QUARTER_MILE = 7.0
 TOD_UNIT_SIZE_GSF = 840  # Lihu'e lowrise product, KAUAI_LIHUE_PRO_FORMA_INPUTS
 TOD_DENSITY_SOURCE_NOTE = (
-    "FAR-based, per HB1409 (2025)/Act 159, HRS 206E-246(j) -- an ENACTED Hawaii statute's "
-    "'transit-supportive density' standard, not a borrowed figure or a multiplier on existing "
-    "zoning. Default FAR 4.0 is the statute's base TOD-area tier; the slider lets a user raise "
-    "it toward the statute's 6.0 (within 1/2 mile of a station) or 7.0 (within 1/4 mile) tiers "
-    "for a closer-to-station scenario. Units = parcel_area_sqft * FAR / 840 sqft (the Lihu'e "
-    "lowrise product's unit size -- a stated assumption, not a TOD-specific source)."
+    "FAR-based, per HB1409 (2025)/Act 159, HRS 206E-246(j) and the TOD-area definition it "
+    "incorporates from HRS 226-63(d) -- an ENACTED Hawaii statute's 'transit-supportive "
+    "density' standard, not a borrowed figure. Mode-agnostic by the statute's own text: FAR "
+    "4.0 within 1/2 mile of ANY real transit station (bus or rail); FAR 6.0/7.0 within 1/2 "
+    "mile/1/4 mile ONLY of a station on an adopted 'locally preferred alternative' (LPA) "
+    "project -- in Hawaii today, that's HART's Skyline rail and nothing else, so 'rail' mode "
+    "can reach 6.0/7.0 but 'bus' mode is capped at the 4.0 base tier everywhere. Units = "
+    "parcel_area_sqft * FAR / 840 sqft (the Lihu'e lowrise product's unit size -- a stated "
+    "assumption, not a TOD-specific source)."
 )
+
+# Which transit modes exist per county, and whether that mode is an
+# adopted LPA project (so it can reach the 6.0/7.0 tiers). Both counties'
+# bus data comes from a real GTFS feed; Kauai has no rail at all.
+TOD_TRANSIT_MODES_BY_COUNTY = {
+    "kauai": {"bus": {"is_lpa": False, "stops_csv": "kauai_bus_major_stops.csv", "stop_col": "mode_implicit_bus"}},
+    "honolulu": {
+        "bus": {"is_lpa": False, "stops_csv": "honolulu_major_transit_stops.csv", "stop_col": "mode"},
+        "rail": {"is_lpa": True, "stops_csv": "honolulu_major_transit_stops.csv", "stop_col": "mode"},
+    },
+}
 
 
 # Same mapping as fetch_data.py's COUNTY_FIPS, duplicated rather than
@@ -873,150 +854,107 @@ def tract_to_place_crosswalk(
     return pd.DataFrame(rows)
 
 
-def kauai_tod_eligible_parcels(
-    major_stops_csv: Path | None = None, arterial_roads_geojson: Path | None = None
-) -> pd.DataFrame:
+def tod_eligible_parcels(county: str, mode: str = "bus") -> pd.DataFrame:
     """
-    TOD eligibility is deliberately a two-part, uniformly-applied corridor
-    test, not a per-stop ranking -- per the user's 2026-10-14 correction:
-    a stop-proximity-only rule flagged ~40% of Kauai's parcels (every town
-    Kauai Bus's shuttle loops reach), which isn't a usable zoning standard
-    -- a zoning overlay has to be drawable as a uniform rule, and "near
-    SOME stop" doesn't concentrate density anywhere in particular.
+    ONE eligibility mechanism for every county/mode combination -- see the
+    "Transit-Oriented Density" comment block above for why this replaced
+    the two different ad hoc mechanisms this project used to have.
 
-    A parcel is TOD-eligible only if its centroid falls within the
-    three-quarter-mile buffer of BOTH:
-    1. A major Kauai Bus stop (2+ weekday routes; fetch_kauai_bus_major_
-       stops()), and
-    2. A Principal- or Minor-Arterial road segment, per HDOT's own
-       federal functional classification (fetch_kauai_arterial_roads()) --
-       Kauai's two cross-island trunk highways (Kuhio Hwy, Kaumualii Hwy)
-       and their immediate approaches, not every residential street a bus
-       happens to loop through.
-
-    Both conditions use the same three-quarter-mile threshold -- OPSD's own
-    statewide TOD-area mapping standard for both rail AND bus (see
-    THREE_QUARTER_MILE_METERS above), not a different distance invented for
-    each factor. The result concentrates eligibility along the island's
-    actual transit corridors rather than blanketing every town with bus
-    service.
+    For each parcel centroid, finds the nearest real transit stop of the
+    requested `mode` (GTFS-derived, 2+ weekday routes = "major" for bus;
+    every scheduled Skyline stop counts for rail -- see
+    fetch_kauai_bus_major_stops()/fetch_honolulu_major_transit_stops() in
+    fetch_data.py) and assigns a FAR tier purely from real distance, per
+    HRS 206E-246(j)/226-63(d):
+      - mode's stops are an adopted LPA project (today, only Honolulu
+        "rail" / Skyline): FAR 7.0 within 1/4 mile, FAR 6.0 within 1/2
+        mile, not eligible beyond that.
+      - mode's stops are NOT an LPA project (every "bus" case): FAR 4.0
+        within 1/2 mile (the statute's base TOD-area definition, which
+        applies to ANY real transit station regardless of mode), not
+        eligible beyond that -- capped here, never reaching 6.0/7.0,
+        because those tiers are explicitly gated on LPA status.
     """
-    stops_path = major_stops_csv or (RAW_DIR / "kauai_bus_major_stops.csv")
+    cfg = COUNTY_CONFIG[county]
+    modes = TOD_TRANSIT_MODES_BY_COUNTY.get(county, {})
+    if mode not in modes:
+        available = list(modes) or ["none"]
+        raise NotImplementedError(
+            f"No '{mode}' transit-stop data for {county} -- available mode(s): {available}."
+        )
+    mode_cfg = modes[mode]
+    stops_path = RAW_DIR / mode_cfg["stops_csv"]
     if not stops_path.exists():
-        raise RuntimeError(
-            f"{stops_path} not found -- run `fetch_data.py --layer kauai_bus_major_stops` first."
-        )
-    roads_path = arterial_roads_geojson or (RAW_DIR / "kauai_arterial_roads.json")
-    if not roads_path.exists():
-        raise RuntimeError(
-            f"{roads_path} not found -- run `fetch_data.py --layer kauai_arterial_roads` first."
-        )
+        raise RuntimeError(f"{stops_path} not found -- run `fetch_data.py --layer ...` first.")
     stops = pd.read_csv(stops_path)
-    major = stops[stops["is_major_stop"].astype(str) == "True"]
-    if major.empty:
-        raise RuntimeError(f"No major stops found in {stops_path}.")
+    if mode_cfg["stop_col"] == "mode":
+        stops = stops[stops["mode"] == mode]
+    # "Major" (2+ weekday routes) only filters bus stops -- a rail line's
+    # own single-route stations all count equally (see tod_eligible_
+    # parcels()'s docstring: no is_major_stop filter for rail).
+    if mode != "rail" and "is_major_stop" in stops.columns:
+        stops = stops[stops["is_major_stop"].astype(str) == "True"]
+    if stops.empty:
+        raise RuntimeError(f"No '{mode}' stops found in {stops_path} after filtering.")
 
-    cfg = COUNTY_CONFIG["kauai"]
     pid = cfg["parcel_id_field"]
     parcels = _load_geojson(RAW_DIR / cfg["parcels_file"]).to_crs(PROJECTED_CRS)
     centroids = parcels[[pid, "geometry"]].copy()
     centroids["geometry"] = centroids.geometry.centroid
 
     stop_points = gpd.GeoDataFrame(
-        major, geometry=gpd.points_from_xy(major["stop_lon"], major["stop_lat"]), crs="EPSG:4326"
+        stops, geometry=gpd.points_from_xy(stops["stop_lon"], stops["stop_lat"]), crs="EPSG:4326"
     ).to_crs(PROJECTED_CRS)
-    station_area = stop_points.geometry.buffer(THREE_QUARTER_MILE_METERS).union_all()
 
-    arterials = _load_geojson(roads_path).to_crs(PROJECTED_CRS)
-    corridor_area = arterials.geometry.buffer(THREE_QUARTER_MILE_METERS).union_all()
+    nearest = gpd.sjoin_nearest(centroids, stop_points[["geometry"]], distance_col="dist_to_stop_m")
+    nearest = nearest.drop_duplicates(subset=pid, keep="first")  # ties -> first nearest only
 
-    centroids["near_major_stop"] = centroids.geometry.within(station_area)
-    centroids["near_arterial_corridor"] = centroids.geometry.within(corridor_area)
-    centroids["tod_eligible"] = centroids["near_major_stop"] & centroids["near_arterial_corridor"]
-    return centroids[[pid, "tod_eligible", "near_major_stop", "near_arterial_corridor"]]
+    if mode_cfg["is_lpa"]:
+        far = pd.Series(pd.NA, index=nearest.index, dtype="Float64")
+        far = far.mask(nearest["dist_to_stop_m"] <= HALF_MILE_METERS, TOD_FAR_HALF_MILE)
+        far = far.mask(nearest["dist_to_stop_m"] <= QUARTER_MILE_METERS, TOD_FAR_QUARTER_MILE)
+    else:
+        far = pd.Series(pd.NA, index=nearest.index, dtype="Float64")
+        far = far.mask(nearest["dist_to_stop_m"] <= HALF_MILE_METERS, TOD_FAR_BASE)
 
-
-def honolulu_tod_eligible_parcels(station_centroids_csv: Path | None = None) -> pd.DataFrame:
-    """
-    Honolulu TOD eligibility, built on REAL HART rail station geometry --
-    not a bus-stop proxy like Kauai's. Source: the "Rail Transit - Station
-    Footprint" ArcGIS Feature Service (item 61378fe5b55c435582f600ebe652fd71,
-    owner honolulugis, data maintained by HART consultant CH2M for RTD/
-    HART, last edited 2025-02-28), pulled 2026-10-15 from
-    https://services6.arcgis.com/2cZSk3EXXiOHcbOl/arcgis/rest/services/
-    HART_Transit_Stations_PUBLIC/FeatureServer/2 and centroid-reduced to
-    data/reference/hart_station_centroids.csv (21 stations, East Kapolei
-    to Ala Moana Center, both the current Hawaiian station names and the
-    FEIS English names). This is the official HHCTCP/HART alignment -- the
-    actual "locally preferred alternative" transit project HRS 206E-246(j)
-    refers to -- so unlike Kauai's two-factor bus-stop-AND-arterial test
-    (needed there because stop-proximity alone flagged ~40% of the county),
-    a single three-quarter-mile buffer around a real rail station is
-    already a meaningfully selective, corridor-concentrated test: rail
-    stations are fixed points ~a mile apart along one alignment, not a
-    dense mesh of bus stops blanketing every town.
-
-    Known limitation, stated rather than smoothed over: all 21 stations
-    are included, not just the 13 currently open (Segments 1-2, through
-    Oct 2025) -- the remaining 8 (Segment 3 to Chinatown/Downtown,
-    scheduled ~2031, plus the Kaka'ako/Ala Moana extension) are under
-    construction or planned, not yet operating. HRS 206E-246(j)'s
-    "locally preferred alternative" language is a planning-designation
-    term that covers the adopted full alignment, not just segments already
-    in service, so this is a defensible reading -- but it does mean some
-    of this scenario's eligible parcels sit near a station that doesn't
-    have trains running yet today.
-    """
-    centroids_path = station_centroids_csv or (RAW_DIR / "hart_station_centroids.csv")
-    if not centroids_path.exists():
-        raise RuntimeError(f"{centroids_path} not found.")
-    stations = pd.read_csv(centroids_path)
-
-    cfg = COUNTY_CONFIG["honolulu"]
-    pid = cfg["parcel_id_field"]
-    parcels = _load_geojson(RAW_DIR / cfg["parcels_file"]).to_crs(PROJECTED_CRS)
-    centroids = parcels[[pid, "geometry"]].copy()
-    centroids["geometry"] = centroids.geometry.centroid
-
-    station_points = gpd.GeoDataFrame(
-        stations, geometry=gpd.points_from_xy(stations["lon"], stations["lat"]), crs="EPSG:4326"
-    ).to_crs(PROJECTED_CRS)
-    station_area = station_points.geometry.buffer(THREE_QUARTER_MILE_METERS).union_all()
-
-    centroids["tod_eligible"] = centroids.geometry.within(station_area)
-    return centroids[[pid, "tod_eligible"]]
+    out = nearest[[pid, "dist_to_stop_m"]].copy()
+    out["tod_far"] = far
+    out["tod_eligible"] = far.notna()
+    return out
 
 
 def run_tod_scenario(
-    county: str = "kauai", far: float = TOD_FAR_BASE, unit_size_gsf: float = TOD_UNIT_SIZE_GSF
+    county: str = "kauai", mode: str = "bus", unit_size_gsf: float = TOD_UNIT_SIZE_GSF
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Transit-Oriented Density INTERVENTION: for parcels within the major-
-    transit-stop + arterial-corridor buffer (kauai_tod_eligible_parcels()),
-    models the effect of allowing a floor area ratio of `far` -- i.e. the
-    capacity unlocked by MORE development rights near transit than current
-    zoning allows, which is what the Challenge benchmark actually asks for
-    ("model the effect of increasing allowable residential density near
-    major transit stops ... through higher building heights and/or
-    increased floor area ratios"). Per the same baseline/intervention
-    principle used everywhere else in this project: additional_estimated_
-    units = max(0, reform_capacity - existing_units_estimate), not
-    reform_capacity on its own, so this never reports a TOD-eligible
-    parcel's full zoned capacity as if it were the reform's incremental
-    effect.
+    Transit-Oriented Density INTERVENTION: for parcels within real
+    distance of a `mode` transit stop (tod_eligible_parcels()), models
+    the effect of allowing the statute's own per-parcel FAR tier --
+    i.e. the capacity unlocked by MORE development rights near transit
+    than current zoning allows, which is what the Challenge benchmark
+    actually asks for ("model the effect of increasing allowable
+    residential density near major transit stops ... through higher
+    building heights and/or increased floor area ratios"). Per the same
+    baseline/intervention principle used everywhere else in this
+    project: additional_estimated_units = max(0, reform_capacity -
+    existing_units_estimate), not reform_capacity on its own, so this
+    never reports a TOD-eligible parcel's full zoned capacity as if it
+    were the reform's incremental effect.
 
-    Density mechanism (see TOD_FAR_BASE above): FAR, not a units/acre
-    figure or a multiplier on existing zoning -- per HB1409 (2025)/Act
-    159, HRS 206E-246(j)'s enacted "transit-supportive density" standard,
-    which the user supplied directly. `far` is meant to be exposed as a
-    UI slider (default 4.0, the statute's base TOD-area tier; its 6.0/7.0
-    half-mile/quarter-mile tiers are real, higher settings a user can
-    choose). Applies to EVERY TOD-eligible parcel regardless of its
-    current zoning district -- the statute's "for all uses permitted ...
-    under underlying county zoning" wording doesn't carve out non-R
-    zones the way this project's own density_per_acre rule does, so this
-    scenario (unlike ADU/Missing Middle) does NOT exclude AG/O/CN/CG
-    parcels from TOD capacity.
+    `mode` selects which real transit-stop dataset this buffers around
+    ("bus": TheBus/Kauai Bus, available in both counties, capped at FAR
+    4.0; "rail": Skyline, Honolulu only, reaches FAR 6.0/7.0 -- see
+    TOD_TRANSIT_MODES_BY_COUNTY). FAR is no longer a user-set slider
+    value disconnected from distance -- it is the real per-parcel tier
+    the statute assigns based on how close that parcel actually is to a
+    stop of the requested mode.
+
+    Applies to EVERY TOD-eligible parcel regardless of its current
+    zoning district -- the statute's "for all uses permitted ... under
+    underlying county zoning" wording doesn't carve out non-R zones the
+    way this project's own density_per_acre rule does, so this scenario
+    (unlike ADU/Missing Middle) does NOT exclude AG/O/CN/CG parcels from
+    TOD capacity.
 
     Parking: the benchmark lets teams "assume that parking requirements
     are reduced or eliminated" for this scenario, so no parking
@@ -1025,17 +963,9 @@ def run_tod_scenario(
     scenario's documented finding on what removing parking actually
     changes in practice (meaningful land-use effect mainly on parcels
     large enough for multi-unit development, modest elsewhere): the same
-    realism caveat applies to a TOD parcel actually being built at `far`
-    without a parking minimum, not just the ADU scenario.
-
-    Supports Kauai (bus-stop + arterial-corridor proxy) and Honolulu (real
-    HART rail station geometry -- see honolulu_tod_eligible_parcels()).
+    realism caveat applies to a TOD parcel actually being built without a
+    parking minimum, not just the ADU scenario.
     """
-    if county not in ("kauai", "honolulu"):
-        raise NotImplementedError(
-            f"run_tod_scenario only supports kauai/honolulu so far -- no transit stop data "
-            f"sourced yet for {county}."
-        )
     cfg = COUNTY_CONFIG[county]
     pid = cfg["parcel_id_field"]
     parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
@@ -1043,17 +973,15 @@ def run_tod_scenario(
         raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
     parcel_table = pd.read_csv(parcel_path)
 
-    eligibility = (
-        kauai_tod_eligible_parcels() if county == "kauai" else honolulu_tod_eligible_parcels()
-    )
+    eligibility = tod_eligible_parcels(county, mode)
     parcel_table[pid] = parcel_table[pid].astype(str)
     eligibility[pid] = eligibility[pid].astype(str)
     parcel_table = parcel_table.merge(eligibility, on=pid, how="left")
     parcel_table["tod_eligible"] = parcel_table["tod_eligible"].fillna(False)
 
     reform_capacity = (
-        (parcel_table["parcel_area_sqft"] * far) / unit_size_gsf
-    ).apply(math.floor)
+        (parcel_table["parcel_area_sqft"] * parcel_table["tod_far"].astype("Float64")) / unit_size_gsf
+    ).apply(lambda v: math.floor(v) if pd.notna(v) else 0)
     additional_capacity = (reform_capacity - parcel_table["existing_units_estimate"]).clip(lower=0)
     additional_capacity = additional_capacity.where(parcel_table["tod_eligible"], 0)
 
@@ -1074,48 +1002,25 @@ def run_tod_scenario(
         tract_rollup["additional_gross_capacity"] * absorption_rate
     ).round(1)
 
-    out_path = OUT_DIR / f"{county}_tod_policy_impact_tract.csv"
+    out_path = OUT_DIR / f"{county}_tod_{mode}_policy_impact_tract.csv"
     tract_rollup.to_csv(out_path, index=False)
-    if county == "kauai":
-        transit_definition = {
-            "major_transit_stop_definition": "Kauai Bus stop served by 2+ distinct weekday "
-            "routes (58 of 126 weekday-served stops, per the GTFS feed fetched 2026-10-14).",
-            "corridor_definition": "HDOT HPMS Roads federal functional classification: "
-            "Principal or Minor Arterial (Kuhio Hwy, Kaumualii Hwy, and their approaches) -- "
-            "a uniform, statewide-applied standard, not a threshold invented for this project.",
-            "proximity_threshold": "Three-quarter-mile radius -- OPSD's own statewide "
-            "TOD-mapping standard for both rail and bus (SCR162 report), applied identically "
-            "to both the major-stop buffer and the arterial-corridor buffer. A parcel must "
-            "fall within BOTH buffers to be TOD-eligible; stop-proximity alone flagged ~40% "
-            "of the county (every town with any bus service) and wasn't usable as a zoning "
-            "standard -- see the corridor_definition requirement above, added 2026-10-14 for "
-            "exactly this reason.",
-            "total_near_major_stop_only": int(parcel_table["near_major_stop"].sum()),
-            "total_near_arterial_corridor_only": int(parcel_table["near_arterial_corridor"].sum()),
-        }
-    else:
-        transit_definition = {
-            "major_transit_stop_definition": "Real HART rail station (all 21 stations, East "
-            "Kapolei to Ala Moana Center), per the official 'Rail Transit - Station Footprint' "
-            "ArcGIS Feature Service (HART consultant CH2M, pulled 2026-10-15) -- not a bus-stop "
-            "proxy. 13 of 21 stations are open and operating (Segments 1-2, through Oct 2025); "
-            "the remaining 8 (Segment 3 to Chinatown/Downtown, ~2031, plus the Kaka'ako/Ala "
-            "Moana extension) are under construction or planned, included here because HRS "
-            "206E-246(j)'s 'locally preferred alternative' language is a planning-designation "
-            "term covering the adopted full alignment -- stated as a real limitation, not "
-            "hidden: see honolulu_tod_eligible_parcels()'s docstring.",
-            "corridor_definition": "None -- unlike Kauai's bus-stop-AND-arterial two-factor "
-            "test (needed because bus-stop proximity alone flagged ~40% of that county), a "
-            "real rail station is already a fixed, corridor-concentrated point; no second "
-            "factor was needed to make this a selective test.",
-            "proximity_threshold": "Three-quarter-mile radius around a station centroid -- "
-            "the same OPSD statewide TOD-mapping standard used for Kauai (SCR162 report), "
-            "applied here to real station geometry instead of bus stops.",
-        }
+    mode_cfg = TOD_TRANSIT_MODES_BY_COUNTY[county][mode]
     metadata = {
         "is_baseline": False,
-        **transit_definition,
-        "far": far,
+        "mode": mode,
+        "is_lpa_mode": mode_cfg["is_lpa"],
+        "major_transit_stop_definition": (
+            "Every scheduled Skyline rail stop (GTFS, MobilityDatabase mdb-2350) -- an LPA "
+            "project, so it reaches the statute's 6.0/7.0 FAR tiers."
+            if mode == "rail" else
+            f"{'TheBus' if county == 'honolulu' else 'Kauai Bus'} stop served by 2+ distinct "
+            "weekday routes (GTFS, MobilityDatabase) -- not an LPA project, so capped at the "
+            "statute's 4.0 base FAR tier regardless of distance."
+        ),
+        "proximity_tiers": "FAR 7.0 within 1/4 mile + FAR 6.0 within 1/2 mile of an LPA station"
+        if mode_cfg["is_lpa"] else "FAR 4.0 within 1/2 mile of a transit station (base TOD-area "
+        "tier -- real distance to the nearest major stop, not a buffer-boolean or a user-set "
+        "slider).",
         "unit_size_gsf": unit_size_gsf,
         "density_mechanism_note": TOD_DENSITY_SOURCE_NOTE,
         "parking_assumption": "Removed per the benchmark's own allowance for this scenario -- "

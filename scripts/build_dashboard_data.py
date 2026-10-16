@@ -92,7 +92,10 @@ def build_kauai_features() -> tuple[list, dict]:
     adu_tract, _ = bm.run_adu_scenario("kauai")
     mm_tract, _ = bm.run_missing_middle_scenario("kauai")
     parking_tract, _ = bm.run_parking_reduction_scenario("kauai")
-    tod_tract, tod_meta = bm.run_tod_scenario("kauai")
+    # TOD rebuilt 2026-10-15 on the real statutory eligibility test (see
+    # build_model.py's TOD comment block) -- "bus" is Kauai's only real
+    # transit mode (no rail), capped at the statute's FAR 4.0 base tier.
+    tod_tract, tod_meta = bm.run_tod_scenario("kauai", mode="bus")
     feas = bm.tract_scaled_development_fee_reduction_feasibility()
 
     adu_gated = bm.apply_feasibility_gate(adu_tract, feas, "estimated_new_units")
@@ -213,8 +216,9 @@ def build_kauai_features() -> tuple[list, dict]:
 
     metadata = {
         "default_absorption_rate": default_absorption_rate,
-        "tod_far_default": bm.TOD_FAR_BASE,
         "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
+        "tod_bus_transit_stop_note": tod_meta.get("major_transit_stop_definition"),
+        "tod_modes_available": ["bus"],  # Kauai has no rail -- see TOD_TRANSIT_MODES_BY_COUNTY
         "affordability_mortgage_rate": bm.HAWAII_MORTGAGE_RATE_30YR_FIXED,
         "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
         "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
@@ -282,16 +286,25 @@ def build_honolulu_features() -> tuple[list, dict]:
     adu_tract, _ = bm.run_adu_scenario("honolulu")
     mm_tract, _ = bm.run_missing_middle_scenario("honolulu")
     parking_tract, _ = bm.run_parking_reduction_scenario("honolulu")
-    tod_tract, tod_meta = bm.run_tod_scenario("honolulu")
+    # TOD rebuilt 2026-10-15 on the real statutory eligibility test --
+    # Honolulu has BOTH real transit modes (TheBus + Skyline rail, same
+    # combined GTFS feed), so both are run: "bus" caps at the statute's
+    # FAR 4.0 base tier everywhere; "rail" is the one LPA project in
+    # Hawaii and reaches the 6.0/7.0 near-station tiers. The dashboard's
+    # mode toggle switches which of these two result sets it displays.
+    tod_bus_tract, tod_bus_meta = bm.run_tod_scenario("honolulu", mode="bus")
+    tod_rail_tract, tod_rail_meta = bm.run_tod_scenario("honolulu", mode="rail")
 
     adu_tract = adu_tract.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
     mm_tract = mm_tract.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
     parking_tract = parking_tract.copy(); parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
-    tod_tract = tod_tract.copy(); tod_tract["GEOID"] = tod_tract["GEOID"].astype(str)
+    tod_bus_tract = tod_bus_tract.copy(); tod_bus_tract["GEOID"] = tod_bus_tract["GEOID"].astype(str)
+    tod_rail_tract = tod_rail_tract.copy(); tod_rail_tract["GEOID"] = tod_rail_tract["GEOID"].astype(str)
     adu_by_geoid = {r["GEOID"]: r for r in adu_tract.to_dict("records")}
     mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
     parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records")}
-    tod_by_geoid = {r["GEOID"]: r for r in tod_tract.to_dict("records")}
+    tod_bus_by_geoid = {r["GEOID"]: r for r in tod_bus_tract.to_dict("records")}
+    tod_rail_by_geoid = {r["GEOID"]: r for r in tod_rail_tract.to_dict("records")}
 
     place_by_geoid = {}
     places_path = RAW_DIR / "census_places.json"
@@ -347,7 +360,8 @@ def build_honolulu_features() -> tuple[list, dict]:
         adu_r = adu_by_geoid.get(geoid, {})
         mm_r = mm_by_geoid.get(geoid, {})
         parking_r = parking_by_geoid.get(geoid, {})
-        tod_r = tod_by_geoid.get(geoid, {})
+        tod_bus_r = tod_bus_by_geoid.get(geoid, {})
+        tod_rail_r = tod_rail_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": "honolulu",
@@ -355,13 +369,17 @@ def build_honolulu_features() -> tuple[list, dict]:
             "place_name": place_by_geoid.get(geoid),
             # Gross capacity only -- no feasible/pct_affording fields yet
             # (see this function's docstring): those gates are still
-            # Kauai-only.
+            # Kauai-only. TOD has two real modes for Honolulu (bus/rail,
+            # see run_tod_scenario() in build_model.py) -- both reported,
+            # the Scenario Explorer's mode toggle picks which to display.
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
-            "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
-            "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
+            "tod_bus_eligible_parcels": tod_bus_r.get("eligible_parcel_count"),
+            "tod_bus_gross_capacity": tod_bus_r.get("additional_gross_capacity"),
+            "tod_rail_eligible_parcels": tod_rail_r.get("eligible_parcel_count"),
+            "tod_rail_gross_capacity": tod_rail_r.get("additional_gross_capacity"),
             "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
@@ -392,9 +410,10 @@ def build_honolulu_features() -> tuple[list, dict]:
         "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
         "countywide_sales_count_2026": countywide_sales_count,
         "default_absorption_rate": default_absorption_rate,
-        "tod_far_default": bm.TOD_FAR_BASE,
         "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
-        "tod_transit_stop_note": tod_meta.get("major_transit_stop_definition"),
+        "tod_bus_transit_stop_note": tod_bus_meta.get("major_transit_stop_definition"),
+        "tod_rail_transit_stop_note": tod_rail_meta.get("major_transit_stop_definition"),
+        "tod_modes_available": ["bus", "rail"],
         "scenario_gates_note": (
             "ADU/Missing Middle/TOD/Parking figures for Honolulu are GROSS capacity only -- "
             "not yet run through a feasibility (development pro forma) or affordability "
@@ -422,6 +441,8 @@ def main() -> None:
             "countywide_median_home_value_usd": kauai_meta.get("countywide_median_home_value_usd"),
             "countywide_sales_median_price_per_sqft": kauai_meta.get("countywide_sales_median_price_per_sqft"),
             "countywide_sales_count_2026": kauai_meta.get("countywide_sales_count_2026"),
+            "tod_bus_transit_stop_note": kauai_meta.get("tod_bus_transit_stop_note"),
+            "tod_modes_available": kauai_meta.get("tod_modes_available"),
             "scenarios_available": ["adu", "mm", "tod", "parking"],
         },
         "honolulu": {
