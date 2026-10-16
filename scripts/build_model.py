@@ -2249,12 +2249,12 @@ def pct_renters_currently_paying_at_or_above(
 
 
 def income_bracket_vs_affordable_stock_share(
-    income_csv: Path | None = None, sales_joined_csv: Path | None = None
+    county: str = "kauai", income_csv: Path | None = None, sales_joined_csv: Path | None = None
 ) -> pd.DataFrame:
     """
-    Pairs, for each real ACS B19001 income bracket, the real share of
-    Kauai households in that bracket against the real share of Kauai's
-    own sales comps (the same usable set as
+    Pairs, for each real ACS B19001 income bracket, the real share of a
+    county's households in that bracket against the real share of that
+    same county's own sales comps (the same usable set as
     tract_comps_development_fee_reduction_feasibility(), Feb 2025-Jun
     2026) priced at or below what a household earning that bracket's
     representative income could afford, under this project's standard
@@ -2265,23 +2265,42 @@ def income_bracket_vs_affordable_stock_share(
     income band ever buy" -- household SHARE, not a raw count, intended
     to sit next to the affordable-stock share as a clustered column chart.
 
+    FIXED 2026-10-16: this function only ever accepted Kauai's own
+    hardcoded file paths and had no `county` parameter at all -- so every
+    caller that passed `county=...` (including Kauai's own dashboard
+    build) was silently raising TypeError and falling back to an empty
+    series, which is why the income/affordability chart was showing NO
+    Kauai bars either, not just a missing Honolulu comparison as the
+    surrounding code's comments assumed. Honolulu's own income
+    distribution and sales-joined CSVs already exist and use the same
+    column names, so both counties are wired through the same per-county
+    file lookup below rather than one hardcoded path.
+
     The top, open-ended bracket ($200,000+) has no real upper bound; a
     representative $250,000 is used as a stated, documented stand-in
     (consistent with this project's other stated-simplification
     choices), and is called out wherever this is surfaced.
     """
-    income_path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
+    default_income_paths = {
+        "kauai": RAW_DIR / "acs_income_distribution_kauai.csv",
+        "honolulu": RAW_DIR / "acs_income_distribution_honolulu.csv",
+    }
+    default_sales_paths = {
+        "kauai": OUT_DIR / "kauai_sales_2026_joined.csv",
+        "honolulu": OUT_DIR / "honolulu_sales_joined.csv",
+    }
+    income_path = income_csv or default_income_paths.get(county, RAW_DIR / f"acs_income_distribution_{county}.csv")
     if not income_path.exists():
         raise RuntimeError(
-            f"{income_path} not found -- run `fetch_data.py --layer acs_income_distribution` first"
+            f"{income_path} not found -- run `fetch_data.py --layer acs_income_distribution --county {county}` first"
         )
     income_df = pd.read_csv(income_path, dtype={"GEOID": str})
 
-    sales_path = sales_joined_csv or (OUT_DIR / "kauai_sales_2026_joined.csv")
+    sales_path = sales_joined_csv or default_sales_paths.get(county, OUT_DIR / f"{county}_sales_joined.csv")
     if not sales_path.exists():
         raise RuntimeError(f"{sales_path} not found -- run `scripts/process_sales_exports.py` first")
     sales = pd.read_csv(sales_path, dtype={"GEOID": str})
-    cfg = COUNTY_CONFIG["kauai"]
+    cfg = COUNTY_CONFIG[county]
     usable_sales = sales[
         (sales["building_sqft"] > 0)
         & sales["price_per_sqft"].notna()

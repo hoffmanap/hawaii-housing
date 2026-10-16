@@ -80,7 +80,14 @@ def join_to_parcels(sales: pd.DataFrame) -> pd.DataFrame:
     parcel_path = bm.OUT_DIR / "honolulu_parcel_level.csv"
     if not parcel_path.exists():
         raise FileNotFoundError(f"Run build_county('honolulu') first -- {parcel_path} not found")
-    parcels = pd.read_csv(parcel_path, dtype={"tmk": str})
+    # FIXED 2026-10-16: GEOID wasn't in this dtype map, so pandas inferred
+    # it as float64 (every GEOID here is all-digit) -- every sales record
+    # then carried a "15003003900.0"-style GEOID into the output CSV,
+    # which never matched a tract's clean "15003003900" GEOID downstream
+    # in build_dashboard_data.py. That silently zeroed out Honolulu's
+    # entire sales-by-tract table despite 8,981 usable sales records
+    # across 293 tracts actually being present in this file.
+    parcels = pd.read_csv(parcel_path, dtype={"tmk": str, "GEOID": str})
     parcels["key8"] = parcels["tmk"].str.zfill(8)
 
     joined = sales.merge(
