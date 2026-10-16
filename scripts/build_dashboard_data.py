@@ -260,21 +260,21 @@ def build_honolulu_features() -> tuple[list, dict]:
     than Kauai's density-per-acre rule; TOD keyed off real HART rail
     station geometry rather than a bus-stop proxy -- see
     run_missing_middle_baseline()/honolulu_tod_eligible_parcels() in
-    build_model.py). Reported as GROSS (pre-feasibility, pre-affordability)
-    capacity only -- UNLIKE Kauai's four scenarios, these are NOT yet run
-    through tract_scaled_development_fee_reduction_feasibility() or
-    tract_affordability_constrained_capacity(): both of those are hard-
-    coded to Kauai's Lihu'e pro forma/ACS path today, and building their
-    Honolulu-specific equivalents (off the real Iwilei-Kapalama O'ahu pro
-    forma already sourced this session) is still open work, not done
-    here. Stated as a real gap, not hidden -- the dashboard's Scenario
-    Explorer should show Honolulu's feasible/pct_affording fields as
-    unavailable rather than silently reusing Kauai's gate numbers.
+    build_model.py).
 
-    Existing Conditions fields (ACS commute/density/home-value/rent, the
-    real household-income distribution, and the real Honolulu sales-
-    export comps) are unchanged from before -- see
-    docs/EXISTING_CONDITIONS.md, process_honolulu_sales_exports.py.
+    **Update, 2026-10-15 (same day, later pass):** ADU, Missing Middle,
+    and both TOD modes now also run through a real Honolulu-specific
+    feasibility and affordability gate --
+    tract_scaled_oahu_development_fee_reduction_feasibility() (the real
+    Iwilei-Kapalama O'ahu pro forma already sourced in build_model.py,
+    tract-scaled by each tract's own ACS median home value, same
+    mechanism as Kauai's gate) and
+    honolulu_tract_affordability_constrained_capacity() (same required-
+    income-vs-ACS-B19001-bracket mechanism, using Honolulu's own ZORI
+    figure for TOD's rental product). Parking Reduction is NOT gated,
+    same as Kauai -- it reports land freed, not a unit count. These are
+    real, previously-sourced-but-unwired inputs, not new figures invented
+    for this pass.
     """
     acs_path = RAW_DIR / "acs_commute_density_honolulu.csv"
     if not acs_path.exists():
@@ -294,6 +294,29 @@ def build_honolulu_features() -> tuple[list, dict]:
     # mode toggle switches which of these two result sets it displays.
     tod_bus_tract, tod_bus_meta = bm.run_tod_scenario("honolulu", mode="bus")
     tod_rail_tract, tod_rail_meta = bm.run_tod_scenario("honolulu", mode="rail")
+
+    # Honolulu feasibility/affordability gate -- see docstring update above.
+    # development_fee_usd pinned to the Challenge's $50,000 standardized
+    # default (not this function's own Honolulu-DPP-based default) so the
+    # dashboard's fee slider -- which recomputes feasibility client-side as
+    # baseline_excess_value + (defaultFeeUsd - sliderFeeUsd) -- has a
+    # consistent baseline to adjust from, same as Kauai's gate.
+    honolulu_feas = bm.tract_scaled_oahu_development_fee_reduction_feasibility(
+        development_fee_usd=bm.STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD
+    )
+    adu_tract = bm.apply_feasibility_gate(adu_tract, honolulu_feas, "estimated_new_units")
+    mm_tract = bm.apply_feasibility_gate(mm_tract, honolulu_feas, "additional_estimated_units")
+    tod_bus_tract = bm.apply_feasibility_gate(tod_bus_tract, honolulu_feas, "additional_estimated_units")
+    tod_rail_tract = bm.apply_feasibility_gate(tod_rail_tract, honolulu_feas, "additional_estimated_units")
+
+    honolulu_afford_for_sale = bm.honolulu_tract_affordability_constrained_capacity(
+        sales_feasibility_df=honolulu_feas, tenure="for_sale"
+    )
+    honolulu_afford_rental = bm.honolulu_tract_affordability_constrained_capacity(tenure="rental")
+    adu_tract = bm.apply_affordability_gate(adu_tract, honolulu_afford_for_sale, "feasibility_adjusted_units")
+    mm_tract = bm.apply_affordability_gate(mm_tract, honolulu_afford_for_sale, "feasibility_adjusted_units")
+    tod_bus_tract = bm.apply_affordability_gate(tod_bus_tract, honolulu_afford_rental, "feasibility_adjusted_units")
+    tod_rail_tract = bm.apply_affordability_gate(tod_rail_tract, honolulu_afford_rental, "feasibility_adjusted_units")
 
     adu_tract = adu_tract.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
     mm_tract = mm_tract.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
@@ -367,19 +390,32 @@ def build_honolulu_features() -> tuple[list, dict]:
             "county": "honolulu",
             "name": feat["properties"].get("NAME"),
             "place_name": place_by_geoid.get(geoid),
-            # Gross capacity only -- no feasible/pct_affording fields yet
-            # (see this function's docstring): those gates are still
-            # Kauai-only. TOD has two real modes for Honolulu (bus/rail,
-            # see run_tod_scenario() in build_model.py) -- both reported,
-            # the Scenario Explorer's mode toggle picks which to display.
+            # Now gated through a real Honolulu-specific feasibility/
+            # affordability pipeline (added 2026-10-15 -- see this
+            # function's docstring update). TOD has two real modes for
+            # Honolulu (bus/rail, see run_tod_scenario() in
+            # build_model.py) -- both reported, the Scenario Explorer's
+            # mode toggle picks which to display.
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
+            "adu_feasible": adu_r.get("feasible"),
+            "adu_pct_affording": adu_r.get("pct_households_affording"),
+            "adu_excess_value_usd_at_fee50k": adu_r.get("excess_value_usd"),
             "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
+            "mm_feasible": mm_r.get("feasible"),
+            "mm_pct_affording": mm_r.get("pct_households_affording"),
+            "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             "tod_bus_eligible_parcels": tod_bus_r.get("eligible_parcel_count"),
             "tod_bus_gross_capacity": tod_bus_r.get("additional_gross_capacity"),
+            "tod_bus_feasible": tod_bus_r.get("feasible"),
+            "tod_bus_pct_affording": tod_bus_r.get("pct_households_affording"),
+            "tod_bus_excess_value_usd_at_fee50k": tod_bus_r.get("excess_value_usd"),
             "tod_rail_eligible_parcels": tod_rail_r.get("eligible_parcel_count"),
             "tod_rail_gross_capacity": tod_rail_r.get("additional_gross_capacity"),
+            "tod_rail_feasible": tod_rail_r.get("feasible"),
+            "tod_rail_pct_affording": tod_rail_r.get("pct_households_affording"),
+            "tod_rail_excess_value_usd_at_fee50k": tod_rail_r.get("excess_value_usd"),
             "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
@@ -415,11 +451,14 @@ def build_honolulu_features() -> tuple[list, dict]:
         "tod_rail_transit_stop_note": tod_rail_meta.get("major_transit_stop_definition"),
         "tod_modes_available": ["bus", "rail"],
         "scenario_gates_note": (
-            "ADU/Missing Middle/TOD/Parking figures for Honolulu are GROSS capacity only -- "
-            "not yet run through a feasibility (development pro forma) or affordability "
-            "(household income vs. required income) gate the way Kauai's four scenarios are. "
-            "Treat these as zoning-capacity estimates, not feasibility-adjusted or demand-"
-            "constrained ones."
+            "ADU/Missing Middle/TOD (bus and rail) now run through a real Honolulu-specific "
+            "feasibility gate (tract_scaled_oahu_development_fee_reduction_feasibility() -- the "
+            "Iwilei-Kapalama O'ahu pro forma, tract-scaled by ACS median home value) and "
+            "affordability gate (honolulu_tract_affordability_constrained_capacity() -- ACS "
+            "B19001 income brackets vs. the required income for the comps-implied for-sale "
+            "price or, for TOD's rental product, Honolulu's own ZORI rent), added 2026-10-15. "
+            "Parking Reduction is NOT gated, same as Kauai -- it reports land freed, not a unit "
+            "count, so there's no unit figure to gate."
         ),
     }
     return features, metadata

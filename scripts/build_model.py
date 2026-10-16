@@ -1581,6 +1581,139 @@ def oahu_iwilei_kapalama_development_fee_reduction_feasibility(
     }
 
 
+# Honolulu countywide median home value (ACS 2022 5-year, B25077, tract
+# median of medians) -- same role as KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD
+# below: the denominator used to scale the Iwilei-Kapalama reference sale
+# price to each Honolulu tract's own housing market. Verified live via
+# Census API, 2026-10-14 -- see docs/EXISTING_CONDITIONS.md.
+HONOLULU_COUNTYWIDE_MEDIAN_HOME_VALUE_USD = 809_550
+
+# Zillow Observed Rent Index (ZORI), Honolulu County, Aug 2026 -- same role
+# as KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH below. Unlike Kauai, Honolulu has
+# full ZIP-level ZORI coverage in principle, but only the countywide series
+# has been pulled so far (to match the ACS/sales geography used everywhere
+# else here) -- a real option for a future pass, not yet done.
+HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH = 3_019.72  # Aug 2026, latest available
+
+
+def tract_scaled_oahu_development_fee_reduction_feasibility(
+    acs_commute_density_csv: Path | None = None,
+    typology: str = "lowrise_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float | None = None,
+) -> pd.DataFrame:
+    """
+    Honolulu analog of tract_scaled_development_fee_reduction_feasibility()
+    below -- runs oahu_iwilei_kapalama_development_fee_reduction_feasibility()
+    once per tract, scaling the Iwilei-Kapalama reference sale price by each
+    tract's own ACS median home value relative to HONOLULU_COUNTYWIDE_
+    MEDIAN_HOME_VALUE_USD, same mechanism and same stated limitations as the
+    Kauai version (cost side held fixed at the source table's figures; only
+    revenue is tract-scaled). Added 2026-10-15 -- Honolulu previously had no
+    feasibility gate at all; this wires the real Oahu pro forma already
+    sourced in this file into the scenario pipeline rather than leaving it
+    computed but unused.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_honolulu.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `fetch_data.py --layer acs_commute_density --county honolulu` first."
+        )
+    acs = pd.read_csv(path, dtype={"GEOID": str})
+    acs = acs.dropna(subset=["median_home_value_usd"]).copy()
+
+    base_inputs = OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology]
+    reference_sale_price = base_inputs["sale_price_per_unit_usd"][affordability]
+
+    rows = []
+    for _, tract in acs.iterrows():
+        scale = tract["median_home_value_usd"] / HONOLULU_COUNTYWIDE_MEDIAN_HOME_VALUE_USD
+        scaled_sale_price = reference_sale_price * scale
+        scaled_inputs = dict(OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology])
+        scaled_inputs["sale_price_per_unit_usd"] = {affordability: scaled_sale_price}
+        original = OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology]
+        OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology] = scaled_inputs
+        try:
+            result = oahu_iwilei_kapalama_development_fee_reduction_feasibility(
+                typology, affordability, development_fee_usd
+            )
+        finally:
+            OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS[typology] = original
+        rows.append(
+            {
+                "GEOID": str(tract["GEOID"]),
+                "median_home_value_usd": tract["median_home_value_usd"],
+                "home_value_scale_vs_countywide": round(scale, 3),
+                "scaled_sale_price_usd": round(scaled_sale_price),
+                "excess_value_usd": result["excess_value_usd"],
+                "feasible": result["feasible"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def honolulu_tract_affordability_constrained_capacity(
+    income_csv: Path | None = None,
+    sales_feasibility_df: pd.DataFrame | None = None,
+    tenure: str = "for_sale",
+) -> pd.DataFrame:
+    """
+    Honolulu analog of tract_affordability_constrained_capacity() below --
+    identical mechanism (required income backed out of the comps-implied
+    price or, for rental, the countywide ZORI figure; checked against the
+    tract's own real ACS B19001 income distribution), swapped to Honolulu's
+    income CSV and HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH for the rental
+    case. Added 2026-10-15, same reason as the feasibility function above.
+    """
+    path = income_csv or (RAW_DIR / "acs_income_distribution_honolulu.csv")
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
+            "--county honolulu` first (needs CENSUS_API_KEY)."
+        )
+    income = pd.read_csv(path, dtype={"GEOID": str})
+
+    rows = []
+    if tenure == "for_sale":
+        if sales_feasibility_df is None:
+            raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
+        feas = sales_feasibility_df.copy()
+        feas["GEOID"] = feas["GEOID"].astype(str)
+        merged = income.merge(feas[["GEOID", "scaled_sale_price_usd"]], on="GEOID", how="inner")
+        for _, tract in merged.iterrows():
+            required_income = _required_income_for_sale_price(tract["scaled_sale_price_usd"])
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": round(tract["scaled_sale_price_usd"]),
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    elif tenure == "rental":
+        required_income = _required_income_for_rent(HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH)
+        for _, tract in income.iterrows():
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": HONOLULU_COUNTYWIDE_ZORI_USD_PER_MONTH,
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    else:
+        raise ValueError(f"tenure must be 'for_sale' or 'rental', got {tenure!r}")
+    return pd.DataFrame(rows)
+
+
 # Kauai countywide median home value (ACS 2022 5-year, B25077), used ONLY as
 # the denominator to scale the Lihu'e Town Core pro forma's reference sale
 # price to each tract's own housing market -- see
