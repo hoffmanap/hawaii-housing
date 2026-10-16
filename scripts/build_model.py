@@ -654,6 +654,24 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     double-counting it here as "reform impact" would overstate what the
     policy actually changes.
 
+    BUILDABLE-AREA CHECK, added 2026-10-15 per direct user correction:
+    the legal cap of 6 units used to be the ONLY constraint here --
+    every eligible parcel got credited with up to 6 units regardless of
+    lot size, with nothing checking whether 6 units' worth of floor area
+    actually fits. Now also capped at floor(parcel_area_sqft /
+    MULTIFAMILY_RENTAL_UNIT_SIZE_GSF) -- a real, cited rental-apartment
+    average (RentCafe/Yardi Matrix, Oahu, 50+-unit buildings, 815 sqft
+    blended; see that constant's own comment), not the for-sale townhome
+    figure this project used to borrow for every floor-area conversion.
+    STATED SIMPLIFICATION: this check is single-story-equivalent --
+    parcel_area_sqft / unit_size, with no allowance for the Challenge's
+    own "up to 3 stories" headroom, no setback/coverage/parking-footprint
+    deduction. It is therefore a CONSERVATIVE floor-area cap, not a
+    precise one -- true buildable capacity on a lot big enough for a
+    multi-story walk-up is higher than this check allows, stated here
+    rather than inventing a stories/coverage multiplier this project has
+    no cited source for.
+
     Not summed with the ADU scenario for the same parcel, for the same
     reason: both draw on the same underlying district allowance. A
     parcel's combined headline number should take the max of the two
@@ -663,7 +681,13 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     cfg = COUNTY_CONFIG[county]
 
     currently_single_family_restricted = parcel_table["baseline_capacity"] == 0
-    reform_capacity = (MISSING_MIDDLE_MAX_UNITS - parcel_table["existing_units_estimate"]).clip(lower=0)
+    floor_area_capacity_units = (
+        parcel_table["parcel_area_sqft"] / MULTIFAMILY_RENTAL_UNIT_SIZE_GSF
+    ).apply(math.floor)
+    reform_capacity_cap = pd.Series(
+        [min(MISSING_MIDDLE_MAX_UNITS, fc) for fc in floor_area_capacity_units], index=parcel_table.index
+    )
+    reform_capacity = (reform_capacity_cap - parcel_table["existing_units_estimate"]).clip(lower=0)
     additional_capacity = reform_capacity.where(currently_single_family_restricted, 0)
 
     eligible_mask = additional_capacity > 0
@@ -718,6 +742,21 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
         "is_baseline": False,
         "absorption_rate": absorption_rate,
         "max_units_cap": MISSING_MIDDLE_MAX_UNITS,
+        "unit_size_gsf": MULTIFAMILY_RENTAL_UNIT_SIZE_GSF,
+        "buildable_area_check": (
+            "Added 2026-10-15: a parcel's reform capacity is now capped at "
+            "floor(parcel_area_sqft / 815 sqft) as well as the flat 6-unit legal "
+            "ceiling -- whichever is lower. 815 sqft is RentCafe/Yardi Matrix's real "
+            "blended average unit size for Oahu apartment buildings with 50+ units "
+            "(rentcafe.com/average-rent-market-trends/us/hi/oahu/, pulled 2026-10-15), "
+            "not a borrowed for-sale townhome figure. This check is single-story-"
+            "equivalent (no credit for the Challenge's own 'up to 3 stories' "
+            "allowance), so it is a conservative floor-area cap, not a precise one -- "
+            "stated here rather than inventing a stories/coverage multiplier this "
+            "project has no cited source for. No comparable 50+-unit survey exists for "
+            "Kauai, so the same Oahu-sourced 815 sqft figure is applied to both "
+            "counties (see MULTIFAMILY_RENTAL_UNIT_SIZE_GSF's own comment)."
+        ),
         "applies_to": applies_to,
         "known_limitation": known_limitation,
     }
@@ -764,7 +803,31 @@ QUARTER_MILE_METERS = 402.336
 TOD_FAR_BASE = 4.0
 TOD_FAR_HALF_MILE = 6.0
 TOD_FAR_QUARTER_MILE = 7.0
-TOD_UNIT_SIZE_GSF = 840  # Lihu'e lowrise product, KAUAI_LIHUE_PRO_FORMA_INPUTS
+
+# REPLACED 2026-10-15, per direct user correction: the previous unit-size
+# assumption (840 sqft) came from KAUAI_LIHUE_PRO_FORMA_INPUTS's townhome
+# FOR-SALE product -- not a comparable reference for TOD or Missing
+# Middle, both of which model smaller RENTAL apartment units, not
+# townhomes. Replaced with a real, cited multifamily rental average:
+#
+# RentCafe/Yardi Matrix, Oahu apartment market (rentcafe.com/average-rent
+# -market-trends/us/hi/oahu/, pulled 2026-10-15) -- "all Oahu apartment
+# buildings with 50 or more units." Real reported average unit sizes:
+#   Studio: 366 sqft | 1BR: 590 sqft | 2BR: 843 sqft | 3BR: 1,225 sqft
+#   All rentals (blended): 815 sqft
+# This project uses the 815 sqft BLENDED average, not one bedroom count,
+# since neither TOD nor Missing Middle assumes a specific unit mix.
+#
+# STATED LIMITATION: Yardi Matrix's methodology covers buildings with 50+
+# units, which concentrates its sample in dense Honolulu/Oahu product --
+# no comparable large-multifamily survey exists for Kauai (which has few
+# or no buildings that size), so this is the best available real figure
+# and is applied to BOTH counties rather than inventing a Kauai-specific
+# number. This is a real methodological compromise, stated rather than
+# hidden, same as this project's practice elsewhere (e.g. the development
+# -fee bound using Honolulu DPP figures as the statewide bound).
+MULTIFAMILY_RENTAL_UNIT_SIZE_GSF = 815
+TOD_UNIT_SIZE_GSF = MULTIFAMILY_RENTAL_UNIT_SIZE_GSF
 TOD_DENSITY_SOURCE_NOTE = (
     "FAR-based, per HB1409 (2025)/Act 159, HRS 206E-246(j) and the TOD-area definition it "
     "incorporates from HRS 226-63(d) -- an ENACTED Hawaii statute's 'transit-supportive "
@@ -773,8 +836,10 @@ TOD_DENSITY_SOURCE_NOTE = (
     "mile/1/4 mile ONLY of a station on an adopted 'locally preferred alternative' (LPA) "
     "project -- in Hawaii today, that's HART's Skyline rail and nothing else, so 'rail' mode "
     "can reach 6.0/7.0 but 'bus' mode is capped at the 4.0 base tier everywhere. Units = "
-    "parcel_area_sqft * FAR / 840 sqft (the Lihu'e lowrise product's unit size -- a stated "
-    "assumption, not a TOD-specific source)."
+    "parcel_area_sqft * FAR / 815 sqft -- RentCafe/Yardi Matrix's real Oahu apartment-rental "
+    "average (50+ unit buildings), not a for-sale townhome figure (see "
+    "MULTIFAMILY_RENTAL_UNIT_SIZE_GSF above for the bedroom-mix breakdown and stated "
+    "limitations)."
 )
 
 # Which transit modes exist per county, and whether that mode is an
