@@ -6,19 +6,19 @@ development-fee feasibility pro forma, or the Existing Conditions inputs
 for ANY county, then re-run `python scripts/embed_dashboard_data.py` to
 re-inline it into index.html (see that script's docstring).
 
-MULTI-COUNTY, 2026-10-15: every feature now carries a "county" property,
-and the Scenario Explorer (ADU/Missing Middle/TOD/Parking, all four of
-which currently only run for Kauai) stays exactly as before -- those
-scenario fields are simply absent/null on non-Kauai features, same as
-"water-only tract" absences were always handled. What's NEW is the
-Existing Conditions baseline (rents, sales, income, commute/density),
-which now also runs for Honolulu (see docs/EXISTING_CONDITIONS.md) and is
-nested per-county under metadata.by_county, per the user's 2026-10-15
-decision to "combine with county as a dimension" rather than a county
-switcher once a second county had data. Top-level metadata keys are left
-untouched and still describe Kauai specifically (the Scenario Explorer
-reads them directly and isn't multi-county yet), so this is purely
-additive -- nothing existing breaks.
+MULTI-COUNTY, 2026-10-15: every feature now carries a "county" property.
+The Existing Conditions baseline (rents, sales, income, commute/density)
+runs for both Kauai and Honolulu, nested per-county under
+metadata.by_county, per the user's decision to "combine with county as a
+dimension" rather than a county switcher once a second county had data.
+
+SAME DAY, LATER PASS: all four reform scenarios (ADU, Missing Middle,
+Parking Reduction, TOD) now also run for Honolulu -- see
+build_honolulu_features()'s docstring for exactly what's real there vs.
+Kauai (Honolulu's numbers are gross capacity only, not yet feasibility-
+or affordability-gated). Top-level metadata keys are left untouched and
+still describe Kauai specifically (the Scenario Explorer reads them
+directly for its Kauai-default view), so this remains additive.
 
 Embeds GROSS (pre-absorption) capacity for every scenario, not just the
 absorption-adjusted unit count -- this is what lets index.html's
@@ -250,21 +250,48 @@ def build_kauai_features() -> tuple[list, dict]:
 
 def build_honolulu_features() -> tuple[list, dict]:
     """
-    Existing Conditions ONLY -- no ADU/Missing Middle/TOD/Parking scenario
-    pipeline for Honolulu yet (ADU's zoning-capacity gate and a real
-    development pro forma now exist, per this session's own work, but
-    they are not yet run through the same tract-level
-    feasibility/affordability-gated pipeline Kauai's four scenarios use --
-    that is still open work, not done here). What IS real and included:
-    ACS commute/density/home-value/rent, the real household-income
-    distribution, and the real Honolulu sales-export comps built this
-    session (see docs/EXISTING_CONDITIONS.md, process_honolulu_sales_
-    exports.py).
+    All four reform scenarios now run for Honolulu -- ADU, Missing
+    Middle, Parking Reduction, and TOD (2026-10-15: Missing Middle keyed
+    off the confirmed ROH Table 21-5.1 single-family-district set rather
+    than Kauai's density-per-acre rule; TOD keyed off real HART rail
+    station geometry rather than a bus-stop proxy -- see
+    run_missing_middle_baseline()/honolulu_tod_eligible_parcels() in
+    build_model.py). Reported as GROSS (pre-feasibility, pre-affordability)
+    capacity only -- UNLIKE Kauai's four scenarios, these are NOT yet run
+    through tract_scaled_development_fee_reduction_feasibility() or
+    tract_affordability_constrained_capacity(): both of those are hard-
+    coded to Kauai's Lihu'e pro forma/ACS path today, and building their
+    Honolulu-specific equivalents (off the real Iwilei-Kapalama O'ahu pro
+    forma already sourced this session) is still open work, not done
+    here. Stated as a real gap, not hidden -- the dashboard's Scenario
+    Explorer should show Honolulu's feasible/pct_affording fields as
+    unavailable rather than silently reusing Kauai's gate numbers.
+
+    Existing Conditions fields (ACS commute/density/home-value/rent, the
+    real household-income distribution, and the real Honolulu sales-
+    export comps) are unchanged from before -- see
+    docs/EXISTING_CONDITIONS.md, process_honolulu_sales_exports.py.
     """
     acs_path = RAW_DIR / "acs_commute_density_honolulu.csv"
     if not acs_path.exists():
         return [], {}
     acs = pd.read_csv(acs_path, dtype={"GEOID": str})
+
+    bm.build_county("honolulu")
+    default_absorption_rate = bm.absorption_rate_benchmark_for("honolulu")
+    adu_tract, _ = bm.run_adu_scenario("honolulu")
+    mm_tract, _ = bm.run_missing_middle_scenario("honolulu")
+    parking_tract, _ = bm.run_parking_reduction_scenario("honolulu")
+    tod_tract, tod_meta = bm.run_tod_scenario("honolulu")
+
+    adu_tract = adu_tract.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
+    mm_tract = mm_tract.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
+    parking_tract = parking_tract.copy(); parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
+    tod_tract = tod_tract.copy(); tod_tract["GEOID"] = tod_tract["GEOID"].astype(str)
+    adu_by_geoid = {r["GEOID"]: r for r in adu_tract.to_dict("records")}
+    mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
+    parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records")}
+    tod_by_geoid = {r["GEOID"]: r for r in tod_tract.to_dict("records")}
 
     place_by_geoid = {}
     places_path = RAW_DIR / "census_places.json"
@@ -317,13 +344,26 @@ def build_honolulu_features() -> tuple[list, dict]:
             continue
         income_r = income_by_geoid.get(geoid, {})
         sales_r = sales_by_geoid.get(geoid, {})
+        adu_r = adu_by_geoid.get(geoid, {})
+        mm_r = mm_by_geoid.get(geoid, {})
+        parking_r = parking_by_geoid.get(geoid, {})
+        tod_r = tod_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": "honolulu",
             "name": feat["properties"].get("NAME"),
             "place_name": place_by_geoid.get(geoid),
-            # No scenario fields (adu_*, mm_*, tod_*, parking_*) -- not run
-            # through the tract-level pipeline for Honolulu yet.
+            # Gross capacity only -- no feasible/pct_affording fields yet
+            # (see this function's docstring): those gates are still
+            # Kauai-only.
+            "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
+            "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
+            "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
+            "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
+            "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
+            "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
+            "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
+            "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
             "median_gross_rent_usd": acs_r.get("median_gross_rent_usd"),
             "pct_alt_mode_commute": acs_r.get("pct_alt_mode_commute"),
@@ -351,6 +391,17 @@ def build_honolulu_features() -> tuple[list, dict]:
         "countywide_median_home_value_usd": 809_550,  # tract median of medians, ACS B25077 -- see EXISTING_CONDITIONS.md
         "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
         "countywide_sales_count_2026": countywide_sales_count,
+        "default_absorption_rate": default_absorption_rate,
+        "tod_far_default": bm.TOD_FAR_BASE,
+        "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
+        "tod_transit_stop_note": tod_meta.get("major_transit_stop_definition"),
+        "scenario_gates_note": (
+            "ADU/Missing Middle/TOD/Parking figures for Honolulu are GROSS capacity only -- "
+            "not yet run through a feasibility (development pro forma) or affordability "
+            "(household income vs. required income) gate the way Kauai's four scenarios are. "
+            "Treat these as zoning-capacity estimates, not feasibility-adjusted or demand-"
+            "constrained ones."
+        ),
     }
     return features, metadata
 
@@ -376,7 +427,7 @@ def main() -> None:
         "honolulu": {
             "label": COUNTY_LABELS["honolulu"],
             **honolulu_meta,
-            "scenarios_available": [],
+            "scenarios_available": ["adu", "mm", "tod", "parking"],
         },
     }
 

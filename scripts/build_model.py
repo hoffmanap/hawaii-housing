@@ -589,23 +589,53 @@ MISSING_MIDDLE_MAX_UNITS = 6  # Challenge benchmark definition: 2-6 units, up to
 
 def run_missing_middle_baseline(county: str) -> pd.DataFrame:
     """
-    BASELINE capacity under current code, R-districts only: how many
-    units a parcel could already legally hold today under its district's
-    confirmed density-per-acre rule (§8-4.2(b)/§8-4.6), uncapped at 6 --
-    some larger R-20 lots legally allow more than 6 units today, and that
-    is NOT a Missing Middle reform, it's current law. Per-parcel
-    baseline_capacity = max_units_by_density - existing_units_estimate,
-    floored at 0.
+    BASELINE capacity under current code: how many units a parcel could
+    already legally hold today, before any Missing Middle reform.
+
+    Kauai: R-districts only, via the confirmed density-per-acre rule
+    (§8-4.2(b)/§8-4.6), uncapped at 6 -- some larger R-20 lots legally
+    allow more than 6 units today, and that is NOT a Missing Middle
+    reform, it's current law. Per-parcel baseline_capacity =
+    max_units_by_density - existing_units_estimate, floored at 0.
+
+    Honolulu: has no sourced units-per-acre rule for its R-districts (see
+    use_rdistrict_density_rule=False in COUNTY_CONFIG), so this uses a
+    different, real zoning-eligibility fact instead of a density figure:
+    adu_eligible_districts (ROH Table 21-5.1-confirmed, 2026-10-15) is
+    exactly Honolulu's set of single-family-zoned districts (Country,
+    R-20, R-10, R-7.5, R-5, R-3.5) -- the same confirmed label already
+    used to scope ADU eligibility. A parcel in one of those districts is
+    treated as baseline_capacity == 0 (today's zoning holds it to what's
+    already built, no legal headroom beyond the existing unit count) --
+    everywhere else (A-1+, B, I, AG, etc.) is pd.NA, same "doesn't apply"
+    treatment Kauai gives non-R zones. This is a coarser baseline than
+    Kauai's -- it rests on the confirmed single-family ZONING LABEL, not
+    on a re-verified read of Table 21-5.1's Duplex-/Two-Unit-Dwelling
+    permission rows (which may allow more than 1 unit by right in some of
+    these districts) -- stated here as a real simplification, not
+    smoothed over, because that finer distinction hasn't been
+    re-confirmed against the actual table since the user supplied it.
     """
     parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
     if not parcel_path.exists():
         raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
     parcel_table = pd.read_csv(parcel_path)
-    has_density_rule = parcel_table["density_per_acre"].notna()
-    parcel_table["baseline_capacity"] = (
-        parcel_table["max_units_by_density"] - parcel_table["existing_units_estimate"]
-    ).clip(lower=0)
-    parcel_table.loc[~has_density_rule, "baseline_capacity"] = pd.NA
+    cfg = COUNTY_CONFIG[county]
+
+    if cfg.get("use_rdistrict_density_rule", True):
+        has_density_rule = parcel_table["density_per_acre"].notna()
+        parcel_table["baseline_capacity"] = (
+            parcel_table["max_units_by_density"] - parcel_table["existing_units_estimate"]
+        ).clip(lower=0)
+        parcel_table.loc[~has_density_rule, "baseline_capacity"] = pd.NA
+    else:
+        single_family_districts = cfg.get("adu_eligible_districts", set())
+        # build_county() normalizes every county's own zoning column name
+        # (cfg["zoning_field"]) to the single output column "zoning" --
+        # read that normalized name, not the raw per-county field key.
+        in_single_family_zone = parcel_table["zoning"].isin(single_family_districts)
+        parcel_table["baseline_capacity"] = pd.NA
+        parcel_table.loc[in_single_family_zone, "baseline_capacity"] = 0
     return parcel_table
 
 
@@ -613,20 +643,20 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     """
     Missing Middle / Gentle Density INTERVENTION: the reform only applies
     to parcels that are CURRENTLY single-family-restricted in practice --
-    i.e. baseline_capacity == 0 (today's density math on this parcel's
-    actual area allows exactly the existing unit and no more, same
-    threshold run_adu_scenario() checks for a second unit). For those
-    parcels, and only those, this models upzoning to the Challenge's
-    benchmark ceiling of 6 units. A parcel a district's density math
-    already lets build past its current unit count (most R-6+ parcels
-    above a certain size) is NOT a Missing Middle candidate -- that's
-    already-legal baseline capacity, reported separately by
-    run_missing_middle_baseline(), and double-counting it here as
-    "reform impact" would overstate what the policy actually changes.
+    i.e. baseline_capacity == 0 (today's zoning on this parcel allows
+    exactly the existing unit and no more -- for Kauai that's the density
+    math, for Honolulu that's the confirmed single-family district label;
+    see run_missing_middle_baseline()). For those parcels, and only those,
+    this models upzoning to the Challenge's benchmark ceiling of 6 units.
+    A parcel a district already lets build past its current unit count is
+    NOT a Missing Middle candidate -- that's already-legal baseline
+    capacity, reported separately by run_missing_middle_baseline(), and
+    double-counting it here as "reform impact" would overstate what the
+    policy actually changes.
 
     Not summed with the ADU scenario for the same parcel, for the same
-    reason: both draw on the same underlying district density allowance.
-    A parcel's combined headline number should take the max of the two
+    reason: both draw on the same underlying district allowance. A
+    parcel's combined headline number should take the max of the two
     interventions, not their sum; that reconciliation isn't wired in yet.
     """
     parcel_table = run_missing_middle_baseline(county)
@@ -655,19 +685,41 @@ def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
 
     out_path = OUT_DIR / f"{county}_missing_middle_policy_impact_tract.csv"
     tract_rollup.to_csv(out_path, index=False)
+    if county == "kauai":
+        applies_to = (
+            "Only parcels currently single-family-restricted in practice (baseline_capacity "
+            "== 0 under the real density rule) -- a parcel a district's density math already "
+            "lets build past its current unit count is baseline capacity, not a Missing Middle "
+            "reform effect, and is excluded here to avoid double-counting it as policy impact. "
+            "See run_missing_middle_baseline() for that separate number. AG/O/CN/CG parcels are "
+            "excluded entirely -- no units/acre figure to compute against."
+        )
+        known_limitation = (
+            "existing_units_estimate assumes 1 unit per already-residential parcel (no direct "
+            "unit-count field for Kauai) -- affects both the baseline and the reform-eligibility "
+            "threshold here."
+        )
+    else:
+        applies_to = (
+            "Only parcels zoned Country/R-20/R-10/R-7.5/R-5/R-3.5 -- Honolulu's confirmed "
+            "single-family districts (ROH Table 21-5.1, same set used for ADU eligibility). "
+            "A-1+/B/I/AG/etc. parcels are excluded entirely, same treatment as Kauai's non-R "
+            "zones. See run_missing_middle_baseline() for the baseline_capacity == 0 logic "
+            "this test uses in place of Kauai's density-per-acre math."
+        )
+        known_limitation = (
+            "Baseline rests on the confirmed single-family ZONING LABEL, not a re-verified "
+            "read of Table 21-5.1's Duplex-/Two-Unit-Dwelling permission rows -- some of these "
+            "districts may already permit more than 1 unit by right, which would overstate this "
+            "scenario's eligible population if so. existing_units_estimate uses Honolulu's real "
+            "LEGDAT-derived unit count (not a 1-unit assumption), unlike Kauai."
+        )
     metadata = {
         "is_baseline": False,
         "absorption_rate": absorption_rate,
         "max_units_cap": MISSING_MIDDLE_MAX_UNITS,
-        "applies_to": "Only parcels currently single-family-restricted in practice "
-        "(baseline_capacity == 0 under the real density rule) -- a parcel a district's "
-        "density math already lets build past its current unit count is baseline capacity, "
-        "not a Missing Middle reform effect, and is excluded here to avoid double-counting it "
-        "as policy impact. See run_missing_middle_baseline() for that separate number. "
-        "AG/O/CN/CG parcels are excluded entirely -- no units/acre figure to compute against.",
-        "known_limitation": "existing_units_estimate assumes 1 unit per already-residential "
-        "parcel (no direct unit-count field for Kauai) -- affects both the baseline and the "
-        "reform-eligibility threshold here.",
+        "applies_to": applies_to,
+        "known_limitation": known_limitation,
     }
     return tract_rollup, metadata
 
@@ -884,6 +936,57 @@ def kauai_tod_eligible_parcels(
     return centroids[[pid, "tod_eligible", "near_major_stop", "near_arterial_corridor"]]
 
 
+def honolulu_tod_eligible_parcels(station_centroids_csv: Path | None = None) -> pd.DataFrame:
+    """
+    Honolulu TOD eligibility, built on REAL HART rail station geometry --
+    not a bus-stop proxy like Kauai's. Source: the "Rail Transit - Station
+    Footprint" ArcGIS Feature Service (item 61378fe5b55c435582f600ebe652fd71,
+    owner honolulugis, data maintained by HART consultant CH2M for RTD/
+    HART, last edited 2025-02-28), pulled 2026-10-15 from
+    https://services6.arcgis.com/2cZSk3EXXiOHcbOl/arcgis/rest/services/
+    HART_Transit_Stations_PUBLIC/FeatureServer/2 and centroid-reduced to
+    data/reference/hart_station_centroids.csv (21 stations, East Kapolei
+    to Ala Moana Center, both the current Hawaiian station names and the
+    FEIS English names). This is the official HHCTCP/HART alignment -- the
+    actual "locally preferred alternative" transit project HRS 206E-246(j)
+    refers to -- so unlike Kauai's two-factor bus-stop-AND-arterial test
+    (needed there because stop-proximity alone flagged ~40% of the county),
+    a single three-quarter-mile buffer around a real rail station is
+    already a meaningfully selective, corridor-concentrated test: rail
+    stations are fixed points ~a mile apart along one alignment, not a
+    dense mesh of bus stops blanketing every town.
+
+    Known limitation, stated rather than smoothed over: all 21 stations
+    are included, not just the 13 currently open (Segments 1-2, through
+    Oct 2025) -- the remaining 8 (Segment 3 to Chinatown/Downtown,
+    scheduled ~2031, plus the Kaka'ako/Ala Moana extension) are under
+    construction or planned, not yet operating. HRS 206E-246(j)'s
+    "locally preferred alternative" language is a planning-designation
+    term that covers the adopted full alignment, not just segments already
+    in service, so this is a defensible reading -- but it does mean some
+    of this scenario's eligible parcels sit near a station that doesn't
+    have trains running yet today.
+    """
+    centroids_path = station_centroids_csv or (RAW_DIR / "hart_station_centroids.csv")
+    if not centroids_path.exists():
+        raise RuntimeError(f"{centroids_path} not found.")
+    stations = pd.read_csv(centroids_path)
+
+    cfg = COUNTY_CONFIG["honolulu"]
+    pid = cfg["parcel_id_field"]
+    parcels = _load_geojson(RAW_DIR / cfg["parcels_file"]).to_crs(PROJECTED_CRS)
+    centroids = parcels[[pid, "geometry"]].copy()
+    centroids["geometry"] = centroids.geometry.centroid
+
+    station_points = gpd.GeoDataFrame(
+        stations, geometry=gpd.points_from_xy(stations["lon"], stations["lat"]), crs="EPSG:4326"
+    ).to_crs(PROJECTED_CRS)
+    station_area = station_points.geometry.buffer(THREE_QUARTER_MILE_METERS).union_all()
+
+    centroids["tod_eligible"] = centroids.geometry.within(station_area)
+    return centroids[[pid, "tod_eligible"]]
+
+
 def run_tod_scenario(
     county: str = "kauai", far: float = TOD_FAR_BASE, unit_size_gsf: float = TOD_UNIT_SIZE_GSF
 ) -> tuple[pd.DataFrame, dict]:
@@ -925,12 +1028,12 @@ def run_tod_scenario(
     realism caveat applies to a TOD parcel actually being built at `far`
     without a parking minimum, not just the ADU scenario.
 
-    Currently Kauai-only (the only county with a real transit GTFS feed
-    identified so far -- see docs/DATA_SOURCES.md).
+    Supports Kauai (bus-stop + arterial-corridor proxy) and Honolulu (real
+    HART rail station geometry -- see honolulu_tod_eligible_parcels()).
     """
-    if county != "kauai":
+    if county not in ("kauai", "honolulu"):
         raise NotImplementedError(
-            f"run_tod_scenario only supports Kauai so far -- no transit stop data "
+            f"run_tod_scenario only supports kauai/honolulu so far -- no transit stop data "
             f"sourced yet for {county}."
         )
     cfg = COUNTY_CONFIG[county]
@@ -940,7 +1043,9 @@ def run_tod_scenario(
         raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
     parcel_table = pd.read_csv(parcel_path)
 
-    eligibility = kauai_tod_eligible_parcels()
+    eligibility = (
+        kauai_tod_eligible_parcels() if county == "kauai" else honolulu_tod_eligible_parcels()
+    )
     parcel_table[pid] = parcel_table[pid].astype(str)
     eligibility[pid] = eligibility[pid].astype(str)
     parcel_table = parcel_table.merge(eligibility, on=pid, how="left")
@@ -971,19 +1076,45 @@ def run_tod_scenario(
 
     out_path = OUT_DIR / f"{county}_tod_policy_impact_tract.csv"
     tract_rollup.to_csv(out_path, index=False)
+    if county == "kauai":
+        transit_definition = {
+            "major_transit_stop_definition": "Kauai Bus stop served by 2+ distinct weekday "
+            "routes (58 of 126 weekday-served stops, per the GTFS feed fetched 2026-10-14).",
+            "corridor_definition": "HDOT HPMS Roads federal functional classification: "
+            "Principal or Minor Arterial (Kuhio Hwy, Kaumualii Hwy, and their approaches) -- "
+            "a uniform, statewide-applied standard, not a threshold invented for this project.",
+            "proximity_threshold": "Three-quarter-mile radius -- OPSD's own statewide "
+            "TOD-mapping standard for both rail and bus (SCR162 report), applied identically "
+            "to both the major-stop buffer and the arterial-corridor buffer. A parcel must "
+            "fall within BOTH buffers to be TOD-eligible; stop-proximity alone flagged ~40% "
+            "of the county (every town with any bus service) and wasn't usable as a zoning "
+            "standard -- see the corridor_definition requirement above, added 2026-10-14 for "
+            "exactly this reason.",
+            "total_near_major_stop_only": int(parcel_table["near_major_stop"].sum()),
+            "total_near_arterial_corridor_only": int(parcel_table["near_arterial_corridor"].sum()),
+        }
+    else:
+        transit_definition = {
+            "major_transit_stop_definition": "Real HART rail station (all 21 stations, East "
+            "Kapolei to Ala Moana Center), per the official 'Rail Transit - Station Footprint' "
+            "ArcGIS Feature Service (HART consultant CH2M, pulled 2026-10-15) -- not a bus-stop "
+            "proxy. 13 of 21 stations are open and operating (Segments 1-2, through Oct 2025); "
+            "the remaining 8 (Segment 3 to Chinatown/Downtown, ~2031, plus the Kaka'ako/Ala "
+            "Moana extension) are under construction or planned, included here because HRS "
+            "206E-246(j)'s 'locally preferred alternative' language is a planning-designation "
+            "term covering the adopted full alignment -- stated as a real limitation, not "
+            "hidden: see honolulu_tod_eligible_parcels()'s docstring.",
+            "corridor_definition": "None -- unlike Kauai's bus-stop-AND-arterial two-factor "
+            "test (needed because bus-stop proximity alone flagged ~40% of that county), a "
+            "real rail station is already a fixed, corridor-concentrated point; no second "
+            "factor was needed to make this a selective test.",
+            "proximity_threshold": "Three-quarter-mile radius around a station centroid -- "
+            "the same OPSD statewide TOD-mapping standard used for Kauai (SCR162 report), "
+            "applied here to real station geometry instead of bus stops.",
+        }
     metadata = {
         "is_baseline": False,
-        "major_transit_stop_definition": "Kauai Bus stop served by 2+ distinct weekday routes "
-        "(58 of 126 weekday-served stops, per the GTFS feed fetched 2026-10-14).",
-        "corridor_definition": "HDOT HPMS Roads federal functional classification: Principal "
-        "or Minor Arterial (Kuhio Hwy, Kaumualii Hwy, and their approaches) -- a uniform, "
-        "statewide-applied standard, not a threshold invented for this project.",
-        "proximity_threshold": "Three-quarter-mile radius -- OPSD's own statewide TOD-mapping "
-        "standard for both rail and bus (SCR162 report), applied identically to both the "
-        "major-stop buffer and the arterial-corridor buffer. A parcel must fall within BOTH "
-        "buffers to be TOD-eligible; stop-proximity alone flagged ~40% of the county (every "
-        "town with any bus service) and wasn't usable as a zoning standard -- see the "
-        "corridor_definition requirement above, added 2026-10-14 for exactly this reason.",
+        **transit_definition,
         "far": far,
         "unit_size_gsf": unit_size_gsf,
         "density_mechanism_note": TOD_DENSITY_SOURCE_NOTE,
@@ -993,8 +1124,6 @@ def run_tod_scenario(
         "(land-use effect concentrated on parcels large enough for multi-unit development).",
         "absorption_rate": absorption_rate,
         "total_tod_eligible_parcels": int(parcel_table["tod_eligible"].sum()),
-        "total_near_major_stop_only": int(parcel_table["near_major_stop"].sum()),
-        "total_near_arterial_corridor_only": int(parcel_table["near_arterial_corridor"].sum()),
     }
     return tract_rollup, metadata
 
