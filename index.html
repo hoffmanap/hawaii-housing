@@ -305,16 +305,28 @@
 <div class="layout" id="scenario-tab" style="display:none;">
 
   <div class="panel" id="controls">
-    <h2>County</h2>
+    <h2>County <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(defaults to statewide — every county built out so far)</span></h2>
     <fieldset id="scenario-county-fieldset">
-      <label class="opt"><input type="radio" name="scenario-county" value="kauai" checked> Kaua'i</label>
-      <label class="opt"><input type="radio" name="scenario-county" value="honolulu"> Honolulu (O'ahu)</label>
+      <label class="opt"><input type="checkbox" name="scenario-county" value="kauai" checked> Kaua'i</label>
+      <label class="opt"><input type="checkbox" name="scenario-county" value="honolulu" checked> Honolulu (O'ahu)</label>
     </fieldset>
     <p id="scenario-county-note" style="font-size:11.5px;color:var(--muted);margin:4px 0 0;display:none;">
       This note is now unused for Honolulu -- it now runs through the same real feasibility
       (development pro forma) and affordability pipeline Kaua'i does, using the Iwilei-Kapalama
       O'ahu pro forma tract-scaled to each tract's own ACS median home value. See
       <a href="docs/EXISTING_CONDITIONS.md" target="_blank">Existing Conditions</a>.
+    </p>
+
+    <h2 style="margin-top:18px;">Housing units created, by reform</h2>
+    <div class="stat-grid" id="reform-compare-grid"></div>
+    <p style="font-size:11px;color:var(--muted);margin:4px 0 0;">
+      Each reform's own total under the current view/absorption/fee/county selection above. <b>"All
+      reforms together" is NOT a recommendation to stack them</b> — ADU, Missing Middle, and TOD each
+      test the SAME parcels against a different zoning rule, so adding their totals double- or
+      triple-counts a parcel that would qualify under more than one reform at once. It's shown as a
+      ceiling on what this model's reforms could add up to if every parcel's single best-case reform
+      applied, not a forecast. Parking Requirement Reduction enables 0 units directly (see note below)
+      and is excluded from the combined total.
     </p>
 
     <h2 style="margin-top:18px;">Scenario</h2>
@@ -378,7 +390,7 @@
       <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions</a>.
     </p>
 
-    <h2 style="margin-top:18px;">Countywide totals</h2>
+    <h2 style="margin-top:18px;">Totals, selected counties</h2>
     <div class="stat-grid" id="stat-grid"></div>
     <div class="note" id="parking-note" style="display:none;">
       <b><mark class="pink">Units this policy enables: 0.</mark></b> Parking Requirement Reduction does
@@ -1022,8 +1034,13 @@ let geoData = null;
 let map, geoLayer, barChart;
 let defaultAbsorptionRate = 0.063;
 let defaultFeeUsd = 50000;
-let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "tract", conditionsGeo: "tract", scenarioCounty: "kauai", todMode: "bus" };
+// scenarioCounties defaults to EVERY built-out county (statewide), per the
+// user's direct request that the Scenario Explorer's default view be
+// statewide, not one county -- a Set so "county" is now "one or more
+// counties," toggled independently with the checkboxes above.
+let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "tract", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu"]), todMode: "bus" };
 const COUNTY_MAP_VIEW = { kauai: [22.0, -159.55, 10.2], honolulu: [21.47, -157.98, 10.8] };
+const STATEWIDE_MAP_VIEW = [21.6, -158.6, 8.3];
 // Which real transit modes each county has data for -- Kauai has no
 // rail (see build_model.py's TOD_TRANSIT_MODES_BY_COUNTY); matches
 // metadata.by_county.<county>.tod_modes_available.
@@ -1069,14 +1086,17 @@ const SCENARIOS = {
   parking: { gross: null, feasible: null, pctAffording: null, excessValue: null, eligible: "parking_eligible_parcels", isUnits: false, metricLabel: "Land freed, sqft (NOT units -- see note)" },
 };
 
-// Returns SCENARIOS[state.scenario], with TOD's gross/eligible field
-// names swapped to match state.scenarioCounty + state.todMode for
-// Honolulu (which has both real bus and rail data -- see
-// build_dashboard_data.py's tod_bus_*/tod_rail_* fields). Kauai only
-// ever has bus data, so its static field names are already correct.
-function effectiveCfg() {
-  const cfg = SCENARIOS[state.scenario];
-  if (state.scenario !== "tod" || state.scenarioCounty !== "honolulu") return cfg;
+// Returns SCENARIOS[scenario], with TOD's gross/eligible field names
+// swapped to match the FEATURE'S OWN county + state.todMode -- Honolulu
+// has both real bus and rail data (tod_bus_*/tod_rail_* fields), Kauai
+// only ever has bus data under its plain "tod_*" fields. Now takes a
+// county directly (not the single global state.scenarioCounty) because
+// the Scenario Explorer can show more than one county's features at
+// once -- a Kauai feature and a Honolulu feature in the same render
+// need different TOD field names even under the same scenario/mode.
+function effectiveCfg(county, scenario = state.scenario) {
+  const cfg = SCENARIOS[scenario];
+  if (scenario !== "tod" || county !== "honolulu") return cfg;
   const prefix = state.todMode === "rail" ? "tod_rail_" : "tod_bus_";
   return {
     ...cfg,
@@ -1136,7 +1156,7 @@ async function init() {
     render();
   });
 
-  map = L.map("map", { zoomControl: true, attributionControl: false }).setView([22.0, -159.55], 10.2);
+  map = L.map("map", { zoomControl: true, attributionControl: false }).setView([STATEWIDE_MAP_VIEW[0], STATEWIDE_MAP_VIEW[1]], STATEWIDE_MAP_VIEW[2]);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
     attribution: "&copy; OpenStreetMap contributors"
@@ -1171,9 +1191,19 @@ async function init() {
     });
   });
   document.querySelectorAll('input[name="scenario-county"]').forEach(el => {
-    el.addEventListener("change", e => {
-      state.scenarioCounty = e.target.value;
-      const gated = SCENARIO_GATES_BY_COUNTY[state.scenarioCounty];
+    el.addEventListener("change", () => {
+      // Checkboxes, not radios -- 0, 1, or both counties can be checked.
+      // Falls back to "all counties checked" if someone unchecks every
+      // box, rather than silently rendering nothing.
+      const checked = Array.from(document.querySelectorAll('input[name="scenario-county"]:checked')).map(i => i.value);
+      if (checked.length === 0) {
+        document.querySelectorAll('input[name="scenario-county"]').forEach(i => { i.checked = true; });
+        state.scenarioCounties = new Set(["kauai", "honolulu"]);
+      } else {
+        state.scenarioCounties = new Set(checked);
+      }
+      const selected = Array.from(state.scenarioCounties);
+      const gated = selected.every(c => SCENARIO_GATES_BY_COUNTY[c]);
       document.getElementById("scenario-county-note").style.display = gated ? "none" : "block";
       document.querySelectorAll('#view-toggle button').forEach(b => { b.disabled = !gated; });
       if (!gated) {
@@ -1181,8 +1211,12 @@ async function init() {
         document.querySelectorAll('#view-toggle button').forEach(b => b.classList.toggle('active', b.dataset.view === "raw"));
       }
       if (map) {
-        const [lat, lon, zoom] = COUNTY_MAP_VIEW[state.scenarioCounty];
-        map.setView([lat, lon], zoom);
+        if (selected.length === 1) {
+          const [lat, lon, zoom] = COUNTY_MAP_VIEW[selected[0]];
+          map.setView([lat, lon], zoom);
+        } else {
+          map.setView([STATEWIDE_MAP_VIEW[0], STATEWIDE_MAP_VIEW[1]], STATEWIDE_MAP_VIEW[2]);
+        }
       }
       render();
     });
@@ -1233,7 +1267,7 @@ function unitsFor(props, cfg) {
 }
 
 function displayValue(feat) {
-  const cfg = effectiveCfg();
+  const cfg = effectiveCfg(feat.properties.county);
   if (!cfg.isUnits) return feat.properties.parking_land_consumed_sqft;
   const raw = unitsFor(feat.properties, cfg);
   if (raw == null) return null;
@@ -1251,7 +1285,7 @@ function displayValue(feat) {
 }
 
 function feasibleOf(feat) {
-  const cfg = effectiveCfg();
+  const cfg = effectiveCfg(feat.properties.county);
   return cfg.feasible ? feasibleAt(feat.properties, cfg) : null;
 }
 
@@ -1265,26 +1299,32 @@ function colorScale(value, max) {
 // Scenario Explorer now runs for both counties (2026-10-15), and as of the
 // same day's later pass both counties also run through a real feasibility/
 // affordability gate (see build_dashboard_data.py's build_honolulu_features()
-// docstring and SCENARIO_GATES_BY_COUNTY above). The county radio in the
-// Scenario tab picks which county's features this reads; the Existing
-// Conditions tab still reads geoData.features directly, unfiltered, for
-// both counties at once.
+// docstring and SCENARIO_GATES_BY_COUNTY above). FIXED 2026-10-16: the
+// county control is now checkboxes, defaulting to every built-out county
+// selected (statewide) -- state.scenarioCounties is a Set, and this reads
+// whichever county(ies) are checked, not just one. The Existing Conditions
+// tab still reads geoData.features directly, unfiltered, for both counties
+// at once.
 function scenarioFeatureCollection() {
-  return { type: "FeatureCollection", features: geoData.features.filter(f => f.properties.county === state.scenarioCounty) };
+  return { type: "FeatureCollection", features: geoData.features.filter(f => state.scenarioCounties.has(f.properties.county)) };
 }
 
 function render() {
-  const cfg = effectiveCfg();
+  const cfg = effectiveCfg(); // generic cfg (isUnits/metricLabel) -- county-independent except TOD field names, handled per-feature below
   document.getElementById("parking-note").style.display = state.scenario === "parking" ? "block" : "none";
   document.getElementById("tod-note").style.display = state.scenario === "tod" ? "block" : "none";
-  const todModes = TOD_MODES_BY_COUNTY[state.scenarioCounty] || ["bus"];
+  // Union of TOD modes available across every CURRENTLY SELECTED county --
+  // e.g. with both counties checked, rail still shows (Honolulu has it),
+  // even though Kauai features simply contribute 0 under rail mode.
+  const selectedCounties = Array.from(state.scenarioCounties);
+  const todModes = Array.from(new Set(selectedCounties.flatMap(c => TOD_MODES_BY_COUNTY[c] || ["bus"])));
   document.getElementById("tod-mode-control").style.display = state.scenario === "tod" ? "block" : "none";
   document.getElementById("tod-mode-rail-label").style.display = todModes.includes("rail") ? "" : "none";
   if (state.scenario === "tod" && !todModes.includes(state.todMode)) {
     state.todMode = "bus";
     document.querySelectorAll('input[name="tod-mode"]').forEach(el => { el.checked = el.value === "bus"; });
   }
-  const gated = SCENARIO_GATES_BY_COUNTY[state.scenarioCounty];
+  const gated = selectedCounties.every(c => SCENARIO_GATES_BY_COUNTY[c]);
   document.querySelectorAll('#view-toggle button').forEach(b => b.disabled = !cfg.isUnits || !gated);
 
   const scenarioGeo = scenarioFeatureCollection();
@@ -1306,18 +1346,19 @@ function render() {
     },
     onEachFeature: (feat, layer) => {
       const p = feat.properties;
+      const featCfg = effectiveCfg(p.county); // per-feature, so a mixed Kauai+Honolulu TOD render reads each one's own real field names
       const v = displayValue(feat);
       const feas = feasibleOf(feat);
       const viewLabels = { raw: 'zoning capacity', feasible: 'feasibility-adjusted', affordable: 'affordability-constrained' };
-      const metricLabel = cfg.isUnits
+      const metricLabel = featCfg.isUnits
         ? `Units (${viewLabels[state.view]})`
         : 'Parking land freed (sqft)';
-      const pctAffording = cfg.pctAffording ? p[cfg.pctAffording] : null;
+      const pctAffording = featCfg.pctAffording ? p[featCfg.pctAffording] : null;
       layer.bindTooltip(
         `<b>${p.name.replace(/; .+ County; Hawaii$/, '')}</b><br>` +
-        `Eligible parcels: ${p[cfg.eligible] ?? '—'}<br>` +
+        `Eligible parcels: ${p[featCfg.eligible] ?? '—'}<br>` +
         `${metricLabel}: ${v != null ? v.toFixed(1) : '—'}<br>` +
-        (cfg.feasible ? `Feasible at scaled sale price: ${feas === true ? 'Yes' : feas === false ? 'No' : '—'}<br>` : '') +
+        (featCfg.feasible ? `Feasible at scaled sale price: ${feas === true ? 'Yes' : feas === false ? 'No' : '—'}<br>` : '') +
         (pctAffording != null ? `Households affording: ${pctAffording.toFixed(1)}%<br>` : '') +
         `Median home value: ${p.median_home_value_usd ? '$' + p.median_home_value_usd.toLocaleString() : '—'}`,
         { sticky: true }
@@ -1327,6 +1368,7 @@ function render() {
 
   renderRamp(max);
   renderStats();
+  renderReformCompare();
   renderBarAndTable();
 }
 
@@ -1340,35 +1382,80 @@ function renderRamp(max) {
   });
 }
 
+// Totals for ONE scenario across a feature list, each feature read through
+// ITS OWN county's field names (effectiveCfg(feature's county, scenario)) --
+// the building block both renderStats() (current scenario only) and
+// renderReformCompare() (every scenario at once, for the "by reform"
+// headline strip) are built from, so the two can never drift apart.
+function scenarioTotals(feats, scenarioKey) {
+  const base = SCENARIOS[scenarioKey];
+  if (!base.isUnits) {
+    const totalSqft = feats.reduce((s, f) => s + (f.properties.parking_land_consumed_sqft || 0), 0);
+    const totalParcels = feats.reduce((s, f) => s + (f.properties.parking_eligible_parcels || 0), 0);
+    return { isUnits: false, totalSqft, totalParcels };
+  }
+  let totalRaw = 0, totalFeasible = 0, totalAffordable = 0;
+  feats.forEach(f => {
+    const cfg = effectiveCfg(f.properties.county, scenarioKey);
+    const raw = unitsFor(f.properties, cfg) || 0;
+    const feasibilityAdjusted = feasibleAt(f.properties, cfg) === false ? 0 : raw;
+    const pctAffording = cfg.pctAffording ? f.properties[cfg.pctAffording] : null;
+    const affordable = pctAffording != null ? feasibilityAdjusted * (pctAffording / 100) : feasibilityAdjusted;
+    totalRaw += raw;
+    totalFeasible += feasibilityAdjusted;
+    totalAffordable += affordable;
+  });
+  return { isUnits: true, totalRaw, totalFeasible, totalAffordable };
+}
+
+// "Housing units created, by reform" + "all reforms together" headline
+// strip, per the user's direct request that the Scenario Explorer lead
+// with each reform's own total and a combined total, not just whichever
+// one radio button happens to be selected. Reads the CURRENTLY selected
+// counties and view (raw/feasible/affordable), recomputed on every
+// render() so the slider/fee/county controls all move it live.
+function renderReformCompare() {
+  const grid = document.getElementById("reform-compare-grid");
+  if (!grid) return;
+  const feats = scenarioFeatureCollection().features;
+  const viewKey = state.view === "raw" ? "totalRaw" : state.view === "feasible" ? "totalFeasible" : "totalAffordable";
+  const viewLabel = { raw: "zoning capacity", feasible: "feasibility-adjusted", affordable: "affordability-constrained" }[state.view];
+  const unitScenarios = ["adu", "mm", "tod"];
+  const totalsByScenario = {};
+  unitScenarios.forEach(key => { totalsByScenario[key] = scenarioTotals(feats, key); });
+  const parkingTotals = scenarioTotals(feats, "parking");
+  const combined = unitScenarios.reduce((s, key) => s + totalsByScenario[key][viewKey], 0);
+  const labelFor = { adu: "ADU", mm: "Missing Middle", tod: "TOD" };
+  grid.innerHTML = unitScenarios.map(key => `
+    <div class="stat" style="${state.scenario === key ? 'outline:2px solid var(--accent);' : ''}">
+      <div class="label">${labelFor[key]} (${viewLabel})</div><div class="value">${totalsByScenario[key][viewKey].toFixed(1)}</div>
+    </div>
+  `).join("") + `
+    <div class="stat gap" style="grid-column: span 2;">
+      <div class="label">All reforms together (${viewLabel}) — ceiling, not additive-in-reality; see note</div>
+      <div class="value">${combined.toFixed(1)}</div>
+    </div>
+    <div class="stat" style="${state.scenario === 'parking' ? 'outline:2px solid var(--accent);' : ''}">
+      <div class="label">Parking: land freed, sqft (not units)</div><div class="value">${parkingTotals.totalSqft.toLocaleString()}</div>
+    </div>
+  `;
+}
+
 function renderStats() {
-  const cfg = effectiveCfg();
+  const cfg = SCENARIOS[state.scenario];
   const grid = document.getElementById("stat-grid");
 
   const scenarioFeats = scenarioFeatureCollection().features;
-  if (!cfg.isUnits) {
-    const totalSqft = scenarioFeats.reduce((s, f) => s + (f.properties.parking_land_consumed_sqft || 0), 0);
-    const totalParcels = scenarioFeats.reduce((s, f) => s + (f.properties.parking_eligible_parcels || 0), 0);
+  const totals = scenarioTotals(scenarioFeats, state.scenario);
+  if (!totals.isUnits) {
     grid.innerHTML = `
-      <div class="stat"><div class="label">Eligible parcels</div><div class="value">${totalParcels}</div></div>
-      <div class="stat"><div class="label">Parking land freed, sqft</div><div class="value">${totalSqft.toLocaleString()}</div></div>
+      <div class="stat"><div class="label">Eligible parcels</div><div class="value">${totals.totalParcels}</div></div>
+      <div class="stat"><div class="label">Parking land freed, sqft</div><div class="value">${totals.totalSqft.toLocaleString()}</div></div>
     `;
     return;
   }
 
-  // Both totals now driven by the SAME slider value -- this is what makes
-  // the feasibility toggle and the absorption slider actually move these
-  // numbers instead of two static totals baked in at generation time.
-  const totalRaw = scenarioFeats.reduce((s, f) => s + (unitsFor(f.properties, cfg) || 0), 0);
-  const totalFeasible = scenarioFeats.reduce((s, f) => {
-    const raw = unitsFor(f.properties, cfg) || 0;
-    return s + (feasibleAt(f.properties, cfg) === false ? 0 : raw);
-  }, 0);
-  const totalAffordable = scenarioFeats.reduce((s, f) => {
-    const raw = unitsFor(f.properties, cfg) || 0;
-    const feasibilityAdjusted = feasibleAt(f.properties, cfg) === false ? 0 : raw;
-    const pctAffording = cfg.pctAffording ? f.properties[cfg.pctAffording] : null;
-    return s + (pctAffording != null ? feasibilityAdjusted * (pctAffording / 100) : feasibilityAdjusted);
-  }, 0);
+  const { totalRaw, totalFeasible, totalAffordable } = totals;
   const gap = totalRaw - totalFeasible;
   const pctGap = totalRaw > 0 ? (100 * gap / totalRaw).toFixed(0) : 0;
   const affordabilityGap = totalFeasible - totalAffordable;
@@ -1406,7 +1493,7 @@ function renderBarAndTable() {
       const v = values.length ? values.reduce((a, b) => a + b, 0) : null;
       let feas = null;
       if (feasField) {
-        const verdicts = feats.map(f => feasibleAt(f.properties, cfg)).filter(x => x != null);
+        const verdicts = feats.map(f => feasibleAt(f.properties, effectiveCfg(f.properties.county))).filter(x => x != null);
         feas = verdicts.length === 0 ? null
           : verdicts.every(x => x === true) ? true
           : verdicts.every(x => x === false) ? false
@@ -1416,7 +1503,7 @@ function renderBarAndTable() {
     }).filter(r => r.v != null);
   } else {
     rows = scenarioFeats.map(f => ({
-      name: shortName(f.properties), v: displayValue(f), feas: feasField ? feasibleAt(f.properties, cfg) : null
+      name: shortName(f.properties), v: displayValue(f), feas: feasField ? feasibleAt(f.properties, effectiveCfg(f.properties.county)) : null
     })).filter(r => r.v != null);
   }
   rows = rows.sort((a, b) => b.v - a.v).slice(0, 10);
