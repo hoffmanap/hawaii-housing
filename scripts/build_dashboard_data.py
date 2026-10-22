@@ -681,20 +681,26 @@ def build_honolulu_features() -> tuple[list, dict]:
             "mm_headroom": int(zoned_capacity_tract["mm_headroom"].sum()),
             "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
         },
-        # Enacted law (HB1409/Act 159), but NOT in existing_conditions_summary
-        # above -- see honolulu_tod_overlay_capacity_tract()'s docstring.
-        # Surfaced here, separately, for Existing Conditions to show as its
-        # own flagged card rather than silently included or silently omitted.
+        # Enacted law (Honolulu's 2016-2017 TOD Neighborhood Plan rezoning),
+        # but NOT in existing_conditions_summary above -- see
+        # honolulu_tod_overlay_capacity_tract()'s docstring. Surfaced here,
+        # separately, for Existing Conditions to show as its own flagged
+        # card rather than silently included or silently omitted, since
+        # it's a distinct enacted mechanism from Act 39's ADU mandate
+        # already folded into zoned_capacity_total.
         "tod_overlay_summary": {
             "eligible_parcel_count": int(tod_overlay_tract["eligible_parcel_count"].sum()),
             "capacity_gross": int(round(tod_overlay_tract["tod_overlay_capacity_gross"].sum())),
             "mode": "rail",
             "note": (
-                "Honolulu's real HB1409/Act 159 FAR overlay near the 13 open Skyline rail stations -- "
-                "enacted law, like the ADU mandate above, but NOT included in zoned_capacity_total. "
-                "The eligibility footprint is a 1/2mi (or 1/4mi for the 7.0 FAR tier) distance buffer "
-                "around each real station, not Honolulu's actual adopted TOD Zoning district "
-                "boundaries, which this project does not have sourced yet -- see docs/DATA_PROVENANCE.md."
+                "Honolulu's real, ADOPTED TOD Neighborhood Plan rezoning (City Council ordinances "
+                "reclassifying parcels near rail stations into TOD-specific zoning districts -- AMX, "
+                "BMX, IMX) -- enacted law, like the ADU mandate above. REBUILT 2026-10-22 on real "
+                "adopted rezoning polygons and the actual ROH Chapter 21 FAR tables for each TOD zoning "
+                "code (replacing an earlier distance-buffer estimate), so this figure is no longer an "
+                "upper-bound guess. Kept as its own separate line rather than folded into "
+                "zoned_capacity_total because it's a distinct enacted mechanism (city rezoning, not the "
+                "ADU mandate) -- see docs/DATA_PROVENANCE.md."
             ),
         },
     }

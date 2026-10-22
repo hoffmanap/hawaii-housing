@@ -803,30 +803,151 @@ def existing_zoned_capacity_tract(county: str) -> pd.DataFrame:
     return tract_rollup
 
 
+# Honolulu's REAL, adopted TOD Neighborhood Plan rezoning (City Council
+# ordinances reclassifying parcels near rail stations into TOD-specific
+# base zoning districts) -- sourced 2026-10-22 from Honolulu's own hosted
+# "TOD_Special_District_and_Zone_Change" feature service (layer 11, "TOD
+# Zoning - Adopted", 186 polygons, see fetch_data.py's
+# TOD_ZONE_CHANGE_BASE_URL / tod_zoning_adopted_honolulu.json), found via
+# the public "TOD Special District and Zone Change" ArcGIS Hub item. This
+# REPLACES the old distance-buffer eligibility estimate: a parcel is now
+# TOD-overlay-eligible only if it falls inside one of these real, enacted
+# rezoning polygons, not merely within a given radius of a station.
+#
+# FAR values are the Revised Ordinances of Honolulu's own Land Use
+# Ordinance, Chapter 21, Article 3 -- directly confirmed 2026-10-22
+# against the rendered tables (not just extracted text, which first came
+# back misaligned and was corrected against a screenshot of the actual
+# table):
+#   Table 21-3.3 "Apartment and Apartment Mixed-Use Zoning District
+#   Development Standards" (ROH 21-3.90-1) -- AMX districts' NON-COMMERCIAL
+#   FAR row (the residential-density allowance; each AMX code also permits
+#   additional COMMERCIAL floor area under 21-3.90-1(c), which is
+#   deliberately excluded here since that's retail/office area, not
+#   housing capacity):
+#     AMX-1: 2.0  AMX-2: 3.0  AMX-3: 4.0
+#   Table 21-3.4 "Resort, Business and Business Mixed-Use Zoning District
+#   Development Standards" (ROH 21-3.120-2) -- these districts set ONE
+#   combined max-density FAR (no non-commercial/commercial split), with a
+#   higher cap "Max FAR" available only via the open space bonus
+#   (21-3.120-2(c)); this project uses the BASE (non-bonus) figure, the
+#   same conservative convention already used for the resort/open-space
+#   bonus the project doesn't model elsewhere:
+#     BMX-3: 2.5 (bonus up to 3.5)  BMX-4: 4.0 (bonus up to 7.5)
+#   IMX-1 (industrial-commercial mixed use, ROH 21-3.140-1(c)(1), per
+#   Ord. 17-55): FAR scales 1.5/2.0/2.5 with the required minimum
+#   non-commercial floor-area share -- this project uses the LOWEST
+#   (1.5) tier, the conservative floor that requires no minimum
+#   non-commercial share, rather than assuming every IMX-1 parcel hits
+#   the higher tiers' residential-share requirements.
+# Only these TOD-specific codes get a FAR here -- a polygon whose
+# to_zoning is a generic, non-TOD-specific code (R-5, A-2, B-1, B-2, P-2,
+# AG-1/2, I-2, F-1, etc. -- meaning that parcel's TOD-area rezoning didn't
+# actually reclassify it into a denser TOD mixed-use district) gets none,
+# since no TOD-specific density bonus applies to it.
+TOD_ADOPTED_ZONE_FAR = {
+    "AMX-1": 2.0,
+    "AMX-2": 3.0,
+    "AMX-3": 4.0,
+    "BMX-3": 2.5,
+    "BMX-4": 4.0,
+    "IMX-1": 1.5,
+}
+
+
+def honolulu_tod_adopted_zoning_parcels() -> pd.DataFrame:
+    """
+    Centroid-joins Honolulu parcels to the real, adopted TOD rezoning
+    polygons (see TOD_ADOPTED_ZONE_FAR above) to find which parcels were
+    actually reclassified into a TOD-specific zoning district, and what
+    that district's real zoned FAR is. Returns one row per matched
+    parcel: tmk, to_zoning, tod_far, station, neighborhood_area, ord_num.
+    Parcels not falling inside any adopted-rezoning polygon, or whose
+    to_zoning isn't one of the TOD-specific codes in TOD_ADOPTED_ZONE_FAR,
+    are simply absent from the result (not TOD-overlay-eligible).
+    """
+    cfg = COUNTY_CONFIG["honolulu"]
+    pid = cfg["parcel_id_field"]
+    parcels = _load_geojson(RAW_DIR / cfg["parcels_file"])
+    tod_zones = _load_geojson(RAW_DIR / "tod_zoning_adopted_honolulu.json")
+
+    parcels = parcels.to_crs(PROJECTED_CRS)
+    tod_zones = tod_zones.to_crs(PROJECTED_CRS)
+
+    centroids = parcels[[pid, "geometry"]].copy()
+    centroids["geometry"] = centroids.geometry.centroid
+
+    hit = _centroid_join(
+        centroids, tod_zones, ["to_zoning", "station", "neighborhood_area", "ord_num"]
+    )
+    hit["tod_far"] = hit["to_zoning"].map(TOD_ADOPTED_ZONE_FAR)
+    return hit[hit["tod_far"].notna()].copy()
+
+
 def honolulu_tod_overlay_capacity_tract() -> pd.DataFrame:
     """
-    Honolulu's TOD FAR overlay (HB1409/Act 159), enacted law like the ADU
-    mandate above -- but NOT folded into existing_zoned_capacity_tract()'s
-    headline total. Reuses run_tod_scenario("honolulu", mode="rail")
-    as-is (no new modeling): rail mode only, since it's tied to the 13
-    real, named Skyline stations (an actual, finite, named set of
-    locations), not bus mode's "any stop, over half the county" footprint
-    that the Methodology tab already flags as implausible.
+    Honolulu's TOD overlay capacity, REBUILT 2026-10-22 on real, adopted
+    rezoning data rather than the prior distance-buffer estimate. Direct
+    follow-up to a question of what it would take to actually resolve
+    (not just flag) the prior buffer-based number -- the user then found
+    the real source data (Honolulu's own "TOD Special District and Zone
+    Change" ArcGIS Hub item / web app, plus the ROH's actual Chapter 21
+    FAR tables via amlegal.com, confirmed against rendered-table
+    screenshots) that this function now uses directly.
 
-    Still carries the same caveat even at rail mode: eligibility is a
-    distance buffer (any parcel within 1/2mi, or 1/4mi for the 7.0 tier,
-    of a real Skyline station), not Honolulu's actual adopted TOD Zoning
-    district boundaries -- this project doesn't have those boundaries
-    yet (checked 2026-10-22: the zoning_honolulu GIS layer already
-    pulled has no TOD overlay designation in it, just base zoning
-    districts). So this number is real-station-anchored but still an
-    upper-bound buffer estimate, which is exactly why it's surfaced
-    separately and flagged rather than added into the main total.
+    What changed from the prior buffer-based version:
+      - Eligibility: a real, enacted rezoning polygon the parcel actually
+        falls inside (honolulu_tod_adopted_zoning_parcels()), not a
+        1/2mi or 1/4mi radius around a station.
+      - Density: the TOD zoning code's own ROH-tabled FAR
+        (TOD_ADOPTED_ZONE_FAR), not an assumed 6.0/7.0 HB1409 tier.
+      - Still follows this project's baseline/intervention principle:
+        additional_capacity = max(0, reform_capacity - true_baseline),
+        true_baseline = max(existing_units_estimate, max_units_by_density)
+        -- same subtraction run_tod_scenario() applies, so this never
+        reports a rezoned parcel's full zoned capacity as if it were the
+        incremental effect of the rezoning.
+
+    Still surfaced SEPARATELY from existing_zoned_capacity_tract()'s
+    headline total, not folded in -- not because of remaining footprint
+    uncertainty (that's now resolved: this is the real adopted footprint),
+    but because this is Honolulu's 2016-2017 City Council TOD Neighborhood
+    Plan rezoning, a distinct enacted mechanism from Act 39's ADU mandate
+    already folded into the total, and keeping it as its own flagged line
+    item is more legible than quietly merging two different legal
+    mechanisms into one number.
     """
-    tod_tract, _ = run_tod_scenario("honolulu", mode="rail")
-    return tod_tract[["GEOID", "eligible_parcel_count", "additional_gross_capacity"]].rename(
-        columns={"additional_gross_capacity": "tod_overlay_capacity_gross"}
+    cfg = COUNTY_CONFIG["honolulu"]
+    pid = cfg["parcel_id_field"]
+    parcel_path = OUT_DIR / "honolulu_parcel_level.csv"
+    parcel_table = pd.read_csv(parcel_path)
+    parcel_table[pid] = parcel_table[pid].astype(str)
+
+    matched = honolulu_tod_adopted_zoning_parcels()
+    matched[pid] = matched[pid].astype(str)
+
+    merged = matched.merge(
+        parcel_table[[pid, "GEOID", "parcel_area_sqft", "existing_units_estimate", "max_units_by_density"]],
+        on=pid, how="inner",
     )
+    reform_capacity = (
+        (merged["parcel_area_sqft"] * merged["tod_far"]) / TOD_UNIT_SIZE_GSF
+    ).apply(lambda v: math.floor(v) if pd.notna(v) else 0)
+    true_baseline = pd.concat(
+        [merged["existing_units_estimate"], merged["max_units_by_density"].fillna(0)], axis=1
+    ).max(axis=1)
+    merged["additional_capacity"] = (reform_capacity - true_baseline).clip(lower=0)
+
+    tract_rollup = (
+        merged[merged["additional_capacity"] > 0]
+        .groupby("GEOID", observed=True)
+        .agg(
+            eligible_parcel_count=(pid, "count"),
+            tod_overlay_capacity_gross=("additional_capacity", "sum"),
+        )
+        .reset_index()
+    )
+    return tract_rollup
 
 
 def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:

@@ -45,6 +45,20 @@ STATE_BASE_URL = "https://geodata.hawaii.gov/arcgis/rest/services/ParcelsZoning/
 HONOLULU_BFS_BASE_URL = (
     "https://services.arcgis.com/tNJpAOha4mODLkXz/arcgis/rest/services/CadastralTables/FeatureServer"
 )
+# Honolulu DPP's own hosted feature service for its real, adopted TOD
+# Neighborhood Plan rezoning (City Council ordinances reclassifying parcels
+# near rail stations into TOD-specific base zoning districts -- AMX-1/2/3,
+# BMX-3/4, IMX-1, etc.). Found 2026-10-22 via the public "TOD Special
+# District and Zone Change" ArcGIS Hub item
+# (honolulu-cchnl.opendata.arcgis.com/maps/909be033665142a3b113bedb86c8ed12),
+# same org as zoning_ohana_honolulu above. Layer 11, "TOD Zoning - Adopted",
+# is the real adopted-footprint replacement for the old distance-buffer TOD
+# eligibility estimate -- see honolulu_tod_overlay_capacity_tract() in
+# build_model.py.
+TOD_ZONE_CHANGE_BASE_URL = (
+    "https://services.arcgis.com/tNJpAOha4mODLkXz/arcgis/rest/services/"
+    "TOD_Special_District_and_Zone_Change/FeatureServer"
+)
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 # Google/Microsoft Open Buildings (VIDA/Source Cooperative), combined, public,
@@ -81,6 +95,7 @@ LAYERS = {
     ),  # confirmed small (130 features) -- a specific ohana regulatory overlay, not citywide ADU eligibility
     "legdat_honolulu": (HONOLULU_BFS_BASE_URL, 11, 2000),  # unit-level legal data; join key: tmk/parid
     "asmtpitt_honolulu": (HONOLULU_BFS_BASE_URL, 10, 2000),  # tax-class + building value; join key: tmk/parid
+    "tod_zoning_adopted_honolulu": (TOD_ZONE_CHANGE_BASE_URL, 11, 2000),  # real adopted TOD rezoning polygons (186 features)
 }
 
 # Census 2020 tract boundaries, needed to roll parcel-level output up to the
