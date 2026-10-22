@@ -229,6 +229,8 @@ def build_kauai_features() -> tuple[list, dict]:
             "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
             "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
             "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
+            "existing_mm_headroom": zoned_r.get("mm_headroom"),
+            "existing_adu_headroom": zoned_r.get("adu_headroom"),
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
             "adu_feasible": adu_r.get("feasible"),
@@ -343,6 +345,8 @@ def build_kauai_features() -> tuple[list, dict]:
             "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
             "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
             "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+            "mm_headroom": int(zoned_capacity_tract["mm_headroom"].sum()),
+            "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
         },
     }
     return features, metadata
@@ -476,6 +480,14 @@ def build_honolulu_features() -> tuple[list, dict]:
     zoned_capacity_tract = zoned_capacity_tract.copy()
     zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
     zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
+    # Honolulu's enacted TOD FAR overlay (HB1409/Act 159) -- surfaced
+    # separately from zoned_capacity_total, not folded in. See
+    # honolulu_tod_overlay_capacity_tract()'s docstring for exactly why:
+    # it's enacted law like the ADU mandate, but its eligibility
+    # footprint is this project's own documented unresolved finding.
+    tod_overlay_tract = bm.honolulu_tod_overlay_capacity_tract()
+    tod_overlay_tract["GEOID"] = tod_overlay_tract["GEOID"].astype(str)
+    tod_overlay_by_geoid = {r["GEOID"]: r for r in tod_overlay_tract.to_dict("records")}
 
     place_by_geoid = {}
     places_path = RAW_DIR / "census_places.json"
@@ -535,6 +547,7 @@ def build_honolulu_features() -> tuple[list, dict]:
         tod_rail_r = tod_rail_by_geoid.get(geoid, {})
         mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
         zoned_r = zoned_by_geoid.get(geoid, {})
+        tod_overlay_r = tod_overlay_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": "honolulu",
@@ -546,6 +559,12 @@ def build_honolulu_features() -> tuple[list, dict]:
             "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
             "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
             "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
+            "existing_mm_headroom": zoned_r.get("mm_headroom"),
+            "existing_adu_headroom": zoned_r.get("adu_headroom"),
+            "existing_tod_overlay_capacity_gross": tod_overlay_r.get("tod_overlay_capacity_gross"),
+            "existing_tod_overlay_eligible_parcels": tod_overlay_r.get("eligible_parcel_count"),
+            "existing_mm_headroom": zoned_r.get("mm_headroom"),
+            "existing_adu_headroom": zoned_r.get("adu_headroom"),
             # Now gated through a real Honolulu-specific feasibility/
             # affordability pipeline (added 2026-10-15 -- see this
             # function's docstring update). TOD has two real modes for
@@ -659,6 +678,24 @@ def build_honolulu_features() -> tuple[list, dict]:
             "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
             "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
             "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+            "mm_headroom": int(zoned_capacity_tract["mm_headroom"].sum()),
+            "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
+        },
+        # Enacted law (HB1409/Act 159), but NOT in existing_conditions_summary
+        # above -- see honolulu_tod_overlay_capacity_tract()'s docstring.
+        # Surfaced here, separately, for Existing Conditions to show as its
+        # own flagged card rather than silently included or silently omitted.
+        "tod_overlay_summary": {
+            "eligible_parcel_count": int(tod_overlay_tract["eligible_parcel_count"].sum()),
+            "capacity_gross": int(round(tod_overlay_tract["tod_overlay_capacity_gross"].sum())),
+            "mode": "rail",
+            "note": (
+                "Honolulu's real HB1409/Act 159 FAR overlay near the 13 open Skyline rail stations -- "
+                "enacted law, like the ADU mandate above, but NOT included in zoned_capacity_total. "
+                "The eligibility footprint is a 1/2mi (or 1/4mi for the 7.0 FAR tier) distance buffer "
+                "around each real station, not Honolulu's actual adopted TOD Zoning district "
+                "boundaries, which this project does not have sourced yet -- see docs/DATA_PROVENANCE.md."
+            ),
         },
     }
     return features, metadata

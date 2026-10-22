@@ -746,13 +746,34 @@ def existing_zoned_capacity_tract(county: str) -> pd.DataFrame:
         label is confirmed single-family, so capacity is known to equal
         what's built -- see run_missing_middle_baseline()'s docstring
         for exactly why Honolulu's figure is coarser than Kauai's).
-      - zoned_capacity_total: existing_units_built + baseline_capacity_gross,
+      - zoned_capacity_total: existing_units_built + mm_headroom + adu_headroom,
         i.e. what's built now plus whatever legal headroom today's
         zoning (not a reform) already allows -- 0 additional headroom
         for a tract with no confirmed density rule, a real stated data
         gap, not an assumption that no headroom exists.
+
+    ADDED 2026-10-22, per direct follow-up ("have you also considered
+    existing ADU/Ohana home permissions"): Act 39/SB3202's statewide
+    2-ADU-per-lot mandate is ALREADY ENACTED LAW, not a reform --
+    run_adu_scenario()'s own docstring says its default-params call "IS
+    the Challenge's required BASELINE." That capacity was being computed
+    (every ADU scenario run) but never folded into THIS function's
+    zoned-capacity total, which only had Missing Middle's headroom. Now
+    adu_headroom (one eligible parcel = one additional unit under the
+    mandate, not scaled by absorption -- this is gross legal capacity,
+    the same convention mm_headroom already uses) is added in too.
+    Deliberately NOT included here: Honolulu's TOD FAR overlay
+    (HB1409/Act 159), also enacted law, but its eligibility footprint is
+    the model's own documented "honest, unresolved finding" (implausibly
+    large -- a distance buffer standing in for real, narrower adopted
+    TOD district boundaries this project doesn't have yet). Folding an
+    unresolved number into this tab's headline total would present it
+    with more confidence than the model itself has in it -- see
+    honolulu_tod_overlay_capacity_tract() below, surfaced separately and
+    flagged, not summed in here.
     """
     baseline_tract = run_missing_middle_baseline_tract(county)
+    adu_tract, _ = run_adu_scenario(county, ScenarioParams())  # defaults == current-law baseline
     parcel_table = run_missing_middle_baseline(county)
     tract_rollup = (
         parcel_table.groupby("GEOID", observed=True)
@@ -765,14 +786,47 @@ def existing_zoned_capacity_tract(county: str) -> pd.DataFrame:
         .reset_index()
     )
     tract_rollup = tract_rollup.merge(
-        baseline_tract[["GEOID", "baseline_eligible_parcel_count", "baseline_capacity_gross"]],
+        baseline_tract[["GEOID", "baseline_eligible_parcel_count", "baseline_capacity_gross"]]
+        .rename(columns={"baseline_capacity_gross": "mm_headroom"}),
         on="GEOID", how="left",
     )
-    tract_rollup["baseline_capacity_gross"] = tract_rollup["baseline_capacity_gross"].fillna(0)
+    tract_rollup = tract_rollup.merge(
+        adu_tract[["GEOID", "eligible_parcel_count"]].rename(columns={"eligible_parcel_count": "adu_headroom"}),
+        on="GEOID", how="left",
+    )
+    tract_rollup["mm_headroom"] = tract_rollup["mm_headroom"].fillna(0)
+    tract_rollup["adu_headroom"] = tract_rollup["adu_headroom"].fillna(0)
+    tract_rollup["baseline_capacity_gross"] = tract_rollup["mm_headroom"] + tract_rollup["adu_headroom"]
     tract_rollup["zoned_capacity_total"] = (
         tract_rollup["existing_units_built"] + tract_rollup["baseline_capacity_gross"]
     )
     return tract_rollup
+
+
+def honolulu_tod_overlay_capacity_tract() -> pd.DataFrame:
+    """
+    Honolulu's TOD FAR overlay (HB1409/Act 159), enacted law like the ADU
+    mandate above -- but NOT folded into existing_zoned_capacity_tract()'s
+    headline total. Reuses run_tod_scenario("honolulu", mode="rail")
+    as-is (no new modeling): rail mode only, since it's tied to the 13
+    real, named Skyline stations (an actual, finite, named set of
+    locations), not bus mode's "any stop, over half the county" footprint
+    that the Methodology tab already flags as implausible.
+
+    Still carries the same caveat even at rail mode: eligibility is a
+    distance buffer (any parcel within 1/2mi, or 1/4mi for the 7.0 tier,
+    of a real Skyline station), not Honolulu's actual adopted TOD Zoning
+    district boundaries -- this project doesn't have those boundaries
+    yet (checked 2026-10-22: the zoning_honolulu GIS layer already
+    pulled has no TOD overlay designation in it, just base zoning
+    districts). So this number is real-station-anchored but still an
+    upper-bound buffer estimate, which is exactly why it's surfaced
+    separately and flagged rather than added into the main total.
+    """
+    tod_tract, _ = run_tod_scenario("honolulu", mode="rail")
+    return tod_tract[["GEOID", "eligible_parcel_count", "additional_gross_capacity"]].rename(
+        columns={"additional_gross_capacity": "tod_overlay_capacity_gross"}
+    )
 
 
 def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
