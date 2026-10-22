@@ -254,6 +254,38 @@ def absorption_rate_benchmark_for(county: str) -> float:
     return row["decade_equivalent_pct_10yr"] / 100.0
 
 
+def absorption_rate_benchmark_detail(county: str) -> dict:
+    """Full benchmark row for one county, for the Assumptions tab's
+    absorption-rate chart -- the blended 10yr/2011-25 FRED-derived rates the
+    slider defaults to, alongside the genuine pre-COVID (2019-only) rate
+    added by scripts/process_building_permits.py from the real Census BPS
+    monthly export, so the chart can show both rather than only the single
+    number the slider uses."""
+    df = load_absorption_rate_benchmarks()
+    area = COUNTY_TO_BENCHMARK_AREA[county]
+    row = df.loc[df["area"] == area].iloc[0]
+    decade_equivalent_pct_2011_25 = (
+        100.0 * 10.0 * float(row["avg_annual_permits_2011_2025"]) / float(row["housing_units_2023"])
+    )
+    return {
+        "area": area,
+        "decade_equivalent_pct_10yr": float(row["decade_equivalent_pct_10yr"]),
+        "decade_equivalent_pct_2011_25": round(decade_equivalent_pct_2011_25, 1),
+        "decade_equivalent_pct_2019_precovid": (
+            float(row["decade_equivalent_pct_2019_precovid"])
+            if "decade_equivalent_pct_2019_precovid" in row and pd.notna(row["decade_equivalent_pct_2019_precovid"])
+            else None
+        ),
+        "avg_annual_permits_2016_2025": float(row["avg_annual_permits_2016_2025"]),
+        "avg_annual_permits_2019_precovid": (
+            float(row["avg_annual_permits_2019_precovid"])
+            if "avg_annual_permits_2019_precovid" in row and pd.notna(row["avg_annual_permits_2019_precovid"])
+            else None
+        ),
+        "housing_units_2023": float(row["housing_units_2023"]),
+    }
+
+
 def _load_geojson(path: Path) -> gpd.GeoDataFrame:
     data = json.loads(path.read_text())
     records = []

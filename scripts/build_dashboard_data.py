@@ -270,6 +270,7 @@ def build_kauai_features() -> tuple[list, dict]:
         # dashboard) -- the quantified parking-reduction estimate behind
         # the Commute & Density chart's headline.
         "parking_reform_context": bm.kauai_parking_reform_context(),
+        "absorption_rate_benchmark_detail": bm.absorption_rate_benchmark_detail("kauai"),
         "countywide_median_home_value_usd": bm.KAUAI_COUNTYWIDE_MEDIAN_HOME_VALUE_USD,
         "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
         "countywide_sales_count_2026": countywide_sales_count,
@@ -569,6 +570,7 @@ def build_honolulu_features() -> tuple[list, dict]:
         "sales_monthly_trend": _sales_monthly_trend_for_metadata("honolulu", sales_path, taxclass_filter),
         "income_vs_affordable_stock": _income_vs_affordable_stock_for_metadata("honolulu"),
         "parking_reform_context": bm.honolulu_parking_reform_context(),
+        "absorption_rate_benchmark_detail": bm.absorption_rate_benchmark_detail("honolulu"),
         "countywide_median_home_value_usd": 809_550,  # tract median of medians, ACS B25077 -- see EXISTING_CONDITIONS.md
         "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
         "countywide_sales_count_2026": countywide_sales_count,
@@ -637,6 +639,7 @@ def main() -> None:
             "countywide_sales_median_price_per_sqft": kauai_meta.get("countywide_sales_median_price_per_sqft"),
             "countywide_sales_count_2026": kauai_meta.get("countywide_sales_count_2026"),
             "parking_reform_context": kauai_meta.get("parking_reform_context"),
+            "absorption_rate_benchmark_detail": kauai_meta.get("absorption_rate_benchmark_detail"),
             "tod_bus_transit_stop_note": kauai_meta.get("tod_bus_transit_stop_note"),
             "tod_modes_available": kauai_meta.get("tod_modes_available"),
             "scenarios_available": ["adu", "mm", "tod", "parking"],
