@@ -268,15 +268,66 @@
 <body>
 
 <header>
-  <p class="kicker">A statewide zoning-reform impact model, piloted in Kauai County</p>
+  <p class="kicker">A statewide zoning-reform impact model</p>
   <h1>Hawaii doesn't have a housing shortage because people won't build. It has one because <mark>almost nothing pencils for who actually lives here</mark>.</h1>
-  <p>
-    This tool measures what zoning reform could — and couldn't — fix. It starts with what Kauai's
-    market looks like today, then runs real reform scenarios (more units per lot, density near
-    transit, cheaper permits) through a development pro forma and an affordability check grounded in
-    actual local incomes, not assumptions.
-  </p>
 </header>
+
+<div class="toggle-row" id="top-tabs">
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="conditions">Existing Conditions</button>
+  <button data-tab="scenario">Scenario Explorer</button>
+  <button data-tab="methodology">Assumptions &amp; Methodology</button>
+</div>
+
+<div id="overview-tab">
+
+<div class="panel" style="max-width:1500px;margin:16px auto 0;padding:20px 28px;">
+  <h2 style="margin-top:0;">What this is</h2>
+  <p>
+    This is a submission to the <b>Housing Data and Technology Innovation Challenge</b>: a
+    statewide zoning-reform impact model for Hawaii. The Challenge asked teams to build a tool
+    that measures how specific reforms — more units per lot, density near transit, smaller
+    parking minimums — would actually change the housing supply, not just whether they're
+    legally allowed.
+  </p>
+  <p>
+    So this tool keeps two questions separate at every step: <b>what's legally buildable today</b>
+    (zoning capacity) versus <b>what a specific reform would add on top of that</b> (the policy's
+    own incremental effect). A reform's total theoretical capacity is never reported as if it
+    were the reform's impact — only the difference between baseline and reform counts.
+  </p>
+  <p>
+    Three reforms are modeled against real parcel, zoning, income, sales, and transit data:
+    <b>ADUs</b> (accessory units on existing lots), <b>Missing Middle</b> (2–6 units per lot),
+    and <b>Transit-Oriented Density</b> (upzoning near real bus/rail stops). A fourth,
+    <b>Parking Requirement Reduction</b>, is modeled separately since it doesn't add units
+    directly — it changes what else is feasible to build. Every parcel that clears a reform's
+    zoning test is then run through a real development pro forma (does it pencil to build?) and
+    an affordability gate (can the tract's own households actually afford it?) before counting
+    toward any headline number.
+  </p>
+
+  <h2>How to read the other tabs</h2>
+  <ul style="line-height:1.7;">
+    <li><b>Existing Conditions</b> — the starting point: how much is already zoned and buildable right now, county by county and tract by tract, independent of any reform.</li>
+    <li><b>Scenario Explorer</b> — pick one or more counties and reforms and see the incremental units each would add, on the map and in headline totals.</li>
+    <li><b>Assumptions &amp; Methodology</b> — where every number in this tool comes from: the formulas, the real market data behind them, and the sourced constants (construction costs, mortgage rates, absorption rates) that feed the pro forma.</li>
+  </ul>
+
+  <h2>Where the data stands</h2>
+  <div class="county-row" style="margin:0 0 10px;">
+    <span class="county-pill active">Kaua'i — built out</span>
+    <span class="county-pill active">Honolulu — built out (Existing Conditions + Scenario Explorer: ADU/Missing Middle/TOD/Parking)</span>
+    <span class="county-pill pending">Maui — sales data cleaned, parcel/zoning pipeline pending</span>
+    <span class="county-pill pending">Hawai'i County — data pending</span>
+  </div>
+  <p style="font-size:12.5px;color:var(--muted);margin:0;">
+    "Statewide" in this tool currently means Kaua'i + Honolulu combined — the two counties with a
+    full parcel/zoning/transit/income pipeline. Maui and Hawai'i County are not yet included in
+    any total; see <a href="docs/DATA_PROVENANCE.md" target="_blank">Data Provenance</a> for exactly
+    what's built out and what's still pending.
+  </p>
+</div>
 
 <div class="hero-stats">
   <div class="hero-stat">
@@ -301,17 +352,6 @@
   </div>
 </div>
 
-<div class="county-row">
-  <span class="county-pill active">Kaua'i — built out</span>
-  <span class="county-pill active">Honolulu — built out (Existing Conditions + Scenario Explorer: ADU/Missing Middle/TOD/Parking)</span>
-  <span class="county-pill pending">Maui — data pending</span>
-  <span class="county-pill pending">Hawai'i County — data pending</span>
-</div>
-
-<div class="toggle-row" id="top-tabs">
-  <button data-tab="conditions" class="active">Existing Conditions</button>
-  <button data-tab="scenario">Scenario Explorer</button>
-  <button data-tab="methodology">Assumptions &amp; Methodology</button>
 </div>
 
 <div class="panel" id="headline-panel" style="max-width:1500px;margin:16px auto 0;padding:16px 28px;display:none;">
@@ -505,7 +545,7 @@
 
 </div>
 
-<div id="conditions-tab">
+<div id="conditions-tab" style="display:none;">
 
   <div class="conditions-sections">
 
@@ -1219,6 +1259,7 @@ async function init() {
       document.querySelectorAll('#top-tabs button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const tab = btn.dataset.tab;
+      document.getElementById("overview-tab").style.display = tab === "overview" ? "" : "none";
       document.getElementById("scenario-tab").style.display = tab === "scenario" ? "" : "none";
       document.getElementById("headline-panel").style.display = tab === "scenario" ? "" : "none";
       document.getElementById("conditions-tab").style.display = tab === "conditions" ? "" : "none";
