@@ -720,6 +720,61 @@ def run_missing_middle_baseline_tract(county: str) -> pd.DataFrame:
     return tract_rollup
 
 
+def existing_zoned_capacity_tract(county: str) -> pd.DataFrame:
+    """
+    Existing Conditions, reframed 2026-10-22 per direct instruction
+    ("existing conditions should be the actual existing conditions based
+    on the current zoned capacity") away from market data (rents, sales,
+    income -- now on the Assumptions tab as evidentiary grounding
+    instead) and onto what a reform-free reading of this project's own
+    pipeline already computes: how many units are already built on
+    residential parcels today, versus how many current zoning (with NO
+    reform) already legally allows on top of that.
+
+    Reuses run_missing_middle_baseline()'s parcel-level fields rather
+    than recomputing anything -- this is a rollup, not a new model. One
+    row per tract:
+      - residential_parcel_count: parcels this model treats as already
+        holding a residential unit (has_existing_residential_unit).
+      - existing_units_built: sum of existing_units_estimate -- the
+        model's stated 1-unit-per-residential-parcel simplification (no
+        county publishes a direct per-parcel unit count), NOT a measured
+        census of actual units.
+      - zoned_capacity_known_parcel_count: parcels where this model has
+        an actual basis for a zoned-capacity number (Kauai: a confirmed
+        density-per-acre rule exists; Honolulu: the parcel's zoning
+        label is confirmed single-family, so capacity is known to equal
+        what's built -- see run_missing_middle_baseline()'s docstring
+        for exactly why Honolulu's figure is coarser than Kauai's).
+      - zoned_capacity_total: existing_units_built + baseline_capacity_gross,
+        i.e. what's built now plus whatever legal headroom today's
+        zoning (not a reform) already allows -- 0 additional headroom
+        for a tract with no confirmed density rule, a real stated data
+        gap, not an assumption that no headroom exists.
+    """
+    baseline_tract = run_missing_middle_baseline_tract(county)
+    parcel_table = run_missing_middle_baseline(county)
+    tract_rollup = (
+        parcel_table.groupby("GEOID", observed=True)
+        .agg(
+            total_parcel_count=("GEOID", "size"),
+            residential_parcel_count=("has_existing_residential", "sum"),
+            existing_units_built=("existing_units_estimate", "sum"),
+            zoned_capacity_known_parcel_count=("baseline_capacity", lambda s: s.notna().sum()),
+        )
+        .reset_index()
+    )
+    tract_rollup = tract_rollup.merge(
+        baseline_tract[["GEOID", "baseline_eligible_parcel_count", "baseline_capacity_gross"]],
+        on="GEOID", how="left",
+    )
+    tract_rollup["baseline_capacity_gross"] = tract_rollup["baseline_capacity_gross"].fillna(0)
+    tract_rollup["zoned_capacity_total"] = (
+        tract_rollup["existing_units_built"] + tract_rollup["baseline_capacity_gross"]
+    )
+    return tract_rollup
+
+
 def run_missing_middle_scenario(county: str) -> tuple[pd.DataFrame, dict]:
     """
     Missing Middle / Gentle Density INTERVENTION: the reform only applies

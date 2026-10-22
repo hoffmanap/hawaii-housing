@@ -99,6 +99,11 @@ def build_kauai_features() -> tuple[list, dict]:
     # docstring: this number existed internally (as a == 0 eligibility
     # filter) but was never itself rolled up and reported until now.
     mm_baseline_tract = bm.run_missing_middle_baseline_tract("kauai")
+    # Existing Conditions reframe, 2026-10-22 per direct instruction:
+    # "existing conditions should be the actual existing conditions based
+    # on the current zoned capacity" -- built vs. legally allowed today,
+    # no reform, no market data.
+    zoned_capacity_tract = bm.existing_zoned_capacity_tract("kauai")
     parking_tract, _ = bm.run_parking_reduction_scenario("kauai")
     # TOD rebuilt 2026-10-15 on the real statutory eligibility test (see
     # build_model.py's TOD comment block) -- "bus" is Kauai's only real
@@ -187,6 +192,9 @@ def build_kauai_features() -> tuple[list, dict]:
     mm_baseline_tract = mm_baseline_tract.copy()
     mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
     mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
+    zoned_capacity_tract = zoned_capacity_tract.copy()
+    zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
+    zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
     parking_tract = parking_tract.copy()
     parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
     parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records") if pd.notna(r.get("GEOID"))}
@@ -206,6 +214,7 @@ def build_kauai_features() -> tuple[list, dict]:
         tod_r = tod_by_geoid.get(geoid, {})
         parking_r = parking_by_geoid.get(geoid, {})
         mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
+        zoned_r = zoned_by_geoid.get(geoid, {})
         acs_r = acs_by_geoid.get(geoid, {})
         income_r = income_by_geoid.get(geoid, {})
         sales_r = sales_by_geoid.get(geoid, {})
@@ -214,6 +223,12 @@ def build_kauai_features() -> tuple[list, dict]:
             "county": "kauai",
             "name": feat["properties"].get("NAME"),
             "place_name": place_by_geoid.get(geoid),
+            "existing_total_parcel_count": zoned_r.get("total_parcel_count"),
+            "existing_residential_parcel_count": zoned_r.get("residential_parcel_count"),
+            "existing_units_built": zoned_r.get("existing_units_built"),
+            "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
+            "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
+            "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
             "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
             "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
             "adu_feasible": adu_r.get("feasible"),
@@ -321,6 +336,14 @@ def build_kauai_features() -> tuple[list, dict]:
             "what's physically built today, fixing a real understatement of TOD's true baseline."
         ),
         "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
+        "existing_conditions_summary": {
+            "total_parcel_count": int(zoned_capacity_tract["total_parcel_count"].sum()),
+            "residential_parcel_count": int(zoned_capacity_tract["residential_parcel_count"].sum()),
+            "existing_units_built": int(zoned_capacity_tract["existing_units_built"].sum()),
+            "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
+            "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
+            "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+        },
     }
     return features, metadata
 
@@ -373,6 +396,7 @@ def build_honolulu_features() -> tuple[list, dict]:
     # EXTRA headroom Honolulu's current zoning allows beyond single-
     # family, only whether a parcel is single-family-restricted at all.
     mm_baseline_tract = bm.run_missing_middle_baseline_tract("honolulu")
+    zoned_capacity_tract = bm.existing_zoned_capacity_tract("honolulu")
     parking_tract, _ = bm.run_parking_reduction_scenario("honolulu")
     # TOD rebuilt 2026-10-15 on the real statutory eligibility test --
     # Honolulu has BOTH real transit modes (TheBus + Skyline rail, same
@@ -449,6 +473,9 @@ def build_honolulu_features() -> tuple[list, dict]:
     mm_baseline_tract = mm_baseline_tract.copy()
     mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
     mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
+    zoned_capacity_tract = zoned_capacity_tract.copy()
+    zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
+    zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
 
     place_by_geoid = {}
     places_path = RAW_DIR / "census_places.json"
@@ -507,11 +534,18 @@ def build_honolulu_features() -> tuple[list, dict]:
         tod_bus_r = tod_bus_by_geoid.get(geoid, {})
         tod_rail_r = tod_rail_by_geoid.get(geoid, {})
         mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
+        zoned_r = zoned_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": "honolulu",
             "name": feat["properties"].get("NAME"),
             "place_name": place_by_geoid.get(geoid),
+            "existing_total_parcel_count": zoned_r.get("total_parcel_count"),
+            "existing_residential_parcel_count": zoned_r.get("residential_parcel_count"),
+            "existing_units_built": zoned_r.get("existing_units_built"),
+            "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
+            "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
+            "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
             # Now gated through a real Honolulu-specific feasibility/
             # affordability pipeline (added 2026-10-15 -- see this
             # function's docstring update). TOD has two real modes for
@@ -618,6 +652,14 @@ def build_honolulu_features() -> tuple[list, dict]:
             "per-acre data means max_units_by_density is 0 for every Honolulu parcel too."
         ),
         "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
+        "existing_conditions_summary": {
+            "total_parcel_count": int(zoned_capacity_tract["total_parcel_count"].sum()),
+            "residential_parcel_count": int(zoned_capacity_tract["residential_parcel_count"].sum()),
+            "existing_units_built": int(zoned_capacity_tract["existing_units_built"].sum()),
+            "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
+            "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
+            "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+        },
     }
     return features, metadata
 
@@ -640,6 +682,8 @@ def main() -> None:
             "countywide_sales_count_2026": kauai_meta.get("countywide_sales_count_2026"),
             "parking_reform_context": kauai_meta.get("parking_reform_context"),
             "absorption_rate_benchmark_detail": kauai_meta.get("absorption_rate_benchmark_detail"),
+            "existing_conditions_summary": kauai_meta.get("existing_conditions_summary"),
+            "mm_baseline_capacity_estimated_units_total": kauai_meta.get("mm_baseline_capacity_estimated_units_total"),
             "tod_bus_transit_stop_note": kauai_meta.get("tod_bus_transit_stop_note"),
             "tod_modes_available": kauai_meta.get("tod_modes_available"),
             "scenarios_available": ["adu", "mm", "tod", "parking"],
