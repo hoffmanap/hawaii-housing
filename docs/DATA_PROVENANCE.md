@@ -25,7 +25,7 @@ Complete one row per dataset. This table is kept in sync with `data/DATA_SOURCES
 | SB1614 (2025, died in committee) | legiscan.com/HI/text/SB1614, Hawaii State Legislature | 2025 session | 2026-10-15 | Public legislative record | State-provided |
 | HiCentral (Honolulu Board of REALTORS) Hawaii mortgage rates | hicentral.com/hawaii-mortgage-rates.php | Page dated 2026-10-14 | 2026-10-15 | Public published rate table | Third-party |
 | Honolulu DPP Affordable Housing Requirement Incentives handout | honolulu.gov/tod, PDF | Feb. 2025 | 2026-10-15 | Public government document | State-provided |
-| Census Building Permits Survey (HI counties) | U.S. Census Bureau | Not yet pulled into this model — listed as a baseline/economic-context source | — | Public | Public |
+| Census Building Permits Survey (HI counties), monthly by structure type | U.S. Census Bureau, BPS monthly export | Jan 2019–Dec 2025, user-supplied | 2026-10-22 | Public | Public |
 | FHFA House Price Index (HI) | Federal Housing Finance Agency | Not yet pulled into this model — listed as a baseline/economic-context source | — | Public | Public |
 
 Categories:
@@ -45,6 +45,7 @@ Categories:
 - **Zillow ZORI/ZHVI**: checked ZIP-level coverage first; found zero Kauai ZIP codes in ZORI (market too thin), so the county-level row is used instead of a finer granularity that doesn't exist for this market.
 - **ACS income distribution (B19001)**: written wide (16 raw bracket counts per tract, not pre-computed percentages), since the required-income threshold it's compared against varies by scenario/typology — the comparison happens downstream in `build_model.tract_affordability_constrained_capacity()`, which interpolates linearly within whichever bracket a threshold falls inside.
 - **Development pro forma inputs (OPSD report, HiCentral rates, Honolulu DPP fee handout)**: hand-digitized from the source PDFs/pages into named constants in `build_model.py`, each with an inline citation comment to the specific table/page the figure came from — never silently re-derived or rounded without saying so.
+- **Census Building Permits Survey (monthly, 2019–2025, by structure type)**: `scripts/process_building_permits.py` maps the export's 4 county names to the existing benchmark areas, then (1) sums `Total Units` for 2019 only — the one full pre-COVID year in the file — to add `avg_annual_permits_2019_precovid` / `annual_rate_pct_2019_precovid` / `decade_equivalent_pct_2019_precovid` columns to `data/reference/absorption_rate_benchmarks.csv` alongside (not replacing) the existing 2016–2025/2011–2025 blended FRED-derived averages, and (2) writes `data/reference/building_permits_by_type.csv`, an annual county × structure-type (single-family / 2-unit / 3-4-unit / 5+-unit) table spanning all 7 years, for the Assumptions tab's unit-mix evidence. Kauai and Honolulu's 2019 rates move in opposite directions from their blended 10-year average (Kauai 5.9% vs. 6.3%; Honolulu 6.1% vs. 5.0%), which is the reason to carry both a blended and an isolated pre-COVID figure rather than only one.
 
 # Known Limitations
 
