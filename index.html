@@ -729,10 +729,32 @@
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Built units vs. what today's zoning already allows, by tract</p>
-          <p class="chart-deck">Top 15 tracts by zoned headroom — how many units already exist (grey) and
-          how much more current law alone permits on top of that (teal), with no reform. A tall teal
-          segment is real legal capacity sitting unused today, before anyone touches a zoning map.</p>
+          <p class="chart-headline">Every tract, one dot each — built vs. zoned capacity</p>
+          <p class="chart-deck">Every tract (or place) plotted at once: how many units already exist
+          (x-axis) against how many today's zoning already allows with no reform (y-axis). The dashed line
+          is <i>built = capacity</i> — a tract sitting right on it has no legal headroom left; the further
+          above the line, the more unused capacity today's zoning already grants. Dot size scales with
+          headroom. Hover a dot for the tract's numbers; drag to zoom, double-click to reset.</p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+          <label style="font-size:12.5px;">County: <select id="conditions-scatter-county-filter">
+            <option value="all">All</option>
+            <option value="kauai">Kaua'i</option>
+            <option value="honolulu">Honolulu</option>
+          </select></label>
+          <span style="font-size:11.5px;color:var(--muted);" id="conditions-scatter-count"></span>
+        </div>
+        <canvas id="capacityScatterChart" height="110"></canvas>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <div class="chart-head">
+          <p class="chart-headline">Biggest unused headroom, top 15</p>
+          <p class="chart-deck">The tracts/places carrying the most already-legal, already-unused capacity
+          — how many units already exist (grey) and how much more current law alone permits on top of that
+          (teal), with no reform.</p>
         </div>
         <canvas id="builtVsCapacityChart"></canvas>
       </div>
@@ -754,33 +776,35 @@
 
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
-        <div class="chart-head">
-          <p class="chart-headline" id="conditions-table-heading">Every tract, side by side</p>
-          <p class="chart-deck">The real underlying numbers behind the chart above, one row per tract (or
-          place). Click a column heading to sort by it; <b>county</b> filters to one county.
-          <b>Zoned capacity (known)</b> counts only parcels this model has an actual basis for — a
+        <details id="conditions-table-details">
+          <summary style="cursor:pointer;font-weight:600;font-size:13.5px;padding:4px 0;">
+            Full data table, every tract (for verification) — click to expand
+          </summary>
+          <p class="chart-deck" style="margin-top:8px;">The real underlying numbers behind the charts above,
+          one row per tract (or place). Click a column heading to sort by it; <b>county</b> filters to one
+          county. <b>Zoned capacity (known)</b> counts only parcels this model has an actual basis for — a
           confirmed density rule (Kaua'i) or a confirmed single-family zoning label (Honolulu), never a
           guess on the remainder.</p>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
-          <label style="font-size:12.5px;">County: <select id="conditions-table-county-filter">
-            <option value="all">All</option>
-            <option value="kauai">Kaua'i</option>
-            <option value="honolulu">Honolulu</option>
-          </select></label>
-          <span style="font-size:11.5px;color:var(--muted);" id="conditions-table-count"></span>
-        </div>
-        <table class="tract-table" id="conditions-table">
-          <thead>
-            <tr>
-              <th data-sort="county">County</th><th data-sort="name" id="conditions-table-th1">Tract</th>
-              <th data-sort="existing_total_parcel_count">Total parcels</th><th data-sort="existing_residential_parcel_count">Residential parcels</th>
-              <th data-sort="existing_units_built">Units built (est.)</th><th data-sort="existing_zoned_capacity_known_parcel_count">Zoned capacity known for</th>
-              <th data-sort="existing_zoned_capacity_total">Zoned capacity total</th><th data-sort="existing_zoned_headroom">Headroom</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+            <label style="font-size:12.5px;">County: <select id="conditions-table-county-filter">
+              <option value="all">All</option>
+              <option value="kauai">Kaua'i</option>
+              <option value="honolulu">Honolulu</option>
+            </select></label>
+            <span style="font-size:11.5px;color:var(--muted);" id="conditions-table-count"></span>
+          </div>
+          <table class="tract-table" id="conditions-table">
+            <thead>
+              <tr>
+                <th data-sort="county">County</th><th data-sort="name" id="conditions-table-th1">Tract</th>
+                <th data-sort="existing_total_parcel_count">Total parcels</th><th data-sort="existing_residential_parcel_count">Residential parcels</th>
+                <th data-sort="existing_units_built">Units built (est.)</th><th data-sort="existing_zoned_capacity_known_parcel_count">Zoned capacity known for</th>
+                <th data-sort="existing_zoned_capacity_total">Zoned capacity total</th><th data-sort="existing_zoned_headroom">Headroom</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </details>
       </div>
     </div>
 
@@ -1215,7 +1239,7 @@ let defaultFeeUsd = 50000;
 // i'd default to place before tracts. tracts are pretty useless") -- and
 // reformInclude is which reforms count toward the "combined" headline
 // card, independent of which single scenario is shown on the map.
-let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", reformInclude: new Set(["adu", "mm", "tod"]) };
+let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all", reformInclude: new Set(["adu", "mm", "tod"]) };
 const COUNTY_MAP_VIEW = { kauai: [22.0, -159.55, 10.2], honolulu: [21.47, -157.98, 10.8] };
 const STATEWIDE_MAP_VIEW = [21.6, -158.6, 8.3];
 // Which real transit modes each county has data for -- Kauai has no
@@ -1457,6 +1481,10 @@ async function init() {
   });
   document.getElementById("conditions-table-county-filter").addEventListener("change", e => {
     state.conditionsTableCounty = e.target.value;
+    renderConditionsTab();
+  });
+  document.getElementById("conditions-scatter-county-filter").addEventListener("change", e => {
+    state.conditionsScatterCounty = e.target.value;
     renderConditionsTab();
   });
   slider.addEventListener("input", () => {
@@ -1864,7 +1892,7 @@ function renderBarAndTable() {
   });
 }
 
-let incomeChart, rentChart, salesChart, densityChart, overTimeChart, builtVsCapacityChart;
+let incomeChart, rentChart, salesChart, densityChart, overTimeChart, builtVsCapacityChart, capacityScatterChart;
 const INCOME_BRACKET_LABELS = [
   "<$10K","$10-15K","$15-20K","$20-25K","$25-30K","$30-35K","$35-40K","$40-45K",
   "$45-50K","$50-60K","$60-75K","$75-100K","$100-125K","$125-150K","$150-200K","$200K+"
@@ -2005,6 +2033,73 @@ function renderConditionsTab() {
     todFlagEl.style.display = "none";
   }
 
+  // -- Every tract/place as one dot: built (x) vs. zoned capacity (y). --
+  // Added 2026-10-22, replacing a ~300-row table as the PRIMARY view --
+  // a long sortable table of every tract is real data but not a useful
+  // way to actually SEE where capacity sits; this scatter shows all of
+  // them at once, with the y=x reference line making "headroom" visually
+  // obvious (height above the line) rather than a column to read. The
+  // full table is kept, collapsed behind <details>, for anyone who
+  // actually wants to verify individual rows.
+  const scatterAllRows = rows.filter(r => r.existing_zoned_capacity_total != null);
+  const scatterRows = state.conditionsScatterCounty === "all"
+    ? scatterAllRows
+    : scatterAllRows.filter(r => r.county === state.conditionsScatterCounty);
+  const maxHeadroomAll = Math.max(1, ...scatterAllRows.map(r => r.existing_zoned_headroom || 0));
+  const bubbleR = h => 3 + 13 * Math.sqrt(Math.max(0, h || 0) / maxHeadroomAll);
+  const COUNTY_COLOR = { kauai: "#2e6fd9", honolulu: "#ff5a5f" };
+  const scatterDatasets = Object.keys(byCounty)
+    .filter(c => scatterRows.some(r => r.county === c))
+    .map(c => ({
+      type: "bubble",
+      label: byCounty[c].label || c,
+      data: scatterRows.filter(r => r.county === c).map(r => ({
+        x: r.existing_units_built || 0,
+        y: r.existing_zoned_capacity_total || 0,
+        r: bubbleR(r.existing_zoned_headroom),
+        _name: labelOf(r),
+        _headroom: r.existing_zoned_headroom || 0,
+      })),
+      backgroundColor: (COUNTY_COLOR[c] || "#5c5748") + "99",
+      borderColor: COUNTY_COLOR[c] || "#5c5748",
+      borderWidth: 1,
+    }));
+  const scatterMax = Math.max(1, ...scatterRows.map(r => Math.max(r.existing_units_built || 0, r.existing_zoned_capacity_total || 0)));
+  scatterDatasets.push({
+    type: "line",
+    label: "Built = capacity (no headroom)",
+    data: [{ x: 0, y: 0 }, { x: scatterMax, y: scatterMax }],
+    borderColor: "#5c5748",
+    borderDash: [5, 4],
+    borderWidth: 1.5,
+    pointRadius: 0,
+    fill: false,
+    order: 99,
+  });
+  if (capacityScatterChart) capacityScatterChart.destroy();
+  capacityScatterChart = new Chart(document.getElementById("capacityScatterChart").getContext("2d"), {
+    type: "bubble",
+    data: { datasets: scatterDatasets },
+    options: {
+      scales: {
+        x: { title: { display: true, text: "Units built (est.)" } },
+        y: { title: { display: true, text: "Zoned capacity, total" } },
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const d = ctx.raw;
+              if (d._name == null) return "Built = capacity";
+              return `${d._name}: ${Math.round(d.x).toLocaleString()} built, ${Math.round(d.y).toLocaleString()} capacity, ${Math.round(d._headroom).toLocaleString()} headroom`;
+            },
+          },
+        },
+      },
+    },
+  });
+  document.getElementById("conditions-scatter-count").textContent = `${scatterRows.length} of ${scatterAllRows.length} ${isPlace ? "places" : "tracts"} shown`;
+
   // -- Built vs. zoned capacity, top 15 tracts/places by headroom --
   const capacityRows = rows
     .filter(r => r.existing_zoned_capacity_total != null)
@@ -2062,7 +2157,6 @@ function renderConditionsTab() {
   `).join("");
 
   document.getElementById("conditions-table-th1").textContent = isPlace ? "Place" : "Tract";
-  document.getElementById("conditions-table-heading").textContent = isPlace ? "Every place, side by side" : "Every tract, side by side";
 
   // REWORKED 2026-10-22 as part of the zoned-capacity reframe: columns
   // are now parcel counts and capacity (built vs. zoned-allowed), not
