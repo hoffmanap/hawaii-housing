@@ -740,8 +740,11 @@
           into the thousands, so a plain linear axis crushes nearly everything into one corner. The dashed
           line is <i>built = capacity</i> — a tract sitting right on it has no legal headroom left; the
           further above the line, the more unused capacity today's zoning already grants. Dot size scales
-          with headroom. Hover a dot for the tract's real numbers (a tract with 0 built or 0 capacity is
-          plotted at the axis floor, not dropped).</p>
+          with headroom. The axis is framed to the middle 94% of the currently-shown tracts, not the
+          full min/max — a few extreme outliers used to stretch the whole chart across 4 decades and
+          crush everything else into a sliver. A handful of outliers (including every tract with 0 built
+          or 0 capacity) are pinned to the nearest edge for plotting only; hover any dot for its real,
+          unclamped numbers.</p>
         </div>
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
           <label style="font-size:12.5px;">County: <select id="conditions-scatter-county-filter">
@@ -2096,17 +2099,37 @@ function renderConditionsTab() {
     for (const s of [1, 2, 5]) { if (s <= mantissa + 1e-9) step = s; }
     return step * Math.pow(10, e);
   };
-  let axisMin = niceFloorLog(scatterVals.length ? Math.min(...scatterVals) : 1);
-  let axisMax = niceCeilLog(scatterVals.length ? Math.max(...scatterVals) : 10);
+  // PERCENTILE-TRIMMED bounds, added 2026-10-22 per direct follow-up
+  // ("Honolulu still looks bad"): a strict min/max still let a literal
+  // handful of outlier tracts (a few with 1-3 units) stretch the axis
+  // across 4 full decades, squeezing the real mass of Honolulu's 300+
+  // tracts -- genuinely clustered in a much narrower band -- into a
+  // sliver of the chart. The axis now frames the 3rd-97th percentile of
+  // whatever's currently shown (rounded to a nice step, as before); a
+  // true outlier beyond that is CLAMPED to the nearest edge for plotting
+  // only (same pattern already used for a true 0) rather than being
+  // allowed to dictate the whole chart's scale -- its real value is
+  // always in the tooltip.
+  const percentile = (sorted, p) => {
+    if (!sorted.length) return null;
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  };
+  const sortedScatterVals = [...scatterVals].sort((a, b) => a - b);
+  const TRIM = 0.03;
+  let axisMin = niceFloorLog(percentile(sortedScatterVals, TRIM) ?? 1);
+  let axisMax = niceCeilLog(percentile(sortedScatterVals, 1 - TRIM) ?? 10);
   if (axisMin >= axisMax) axisMax = niceCeilLog(axisMin * 2); // guard against a degenerate dataset
+  const clamp = v => Math.min(axisMax, Math.max(axisMin, v));
   const scatterDatasets = Object.keys(byCounty)
     .filter(c => scatterRows.some(r => r.county === c))
     .map(c => ({
       type: "bubble",
       label: byCounty[c].label || c,
       data: scatterRows.filter(r => r.county === c).map(r => ({
-        x: Math.max(axisMin, r.existing_units_built || 0),
-        y: Math.max(axisMin, r.existing_zoned_capacity_total || 0),
+        x: clamp(r.existing_units_built || 0),
+        y: clamp(r.existing_zoned_capacity_total || 0),
         r: bubbleR(r.existing_zoned_headroom),
         _name: labelOf(r),
         _xReal: r.existing_units_built || 0,
@@ -2184,7 +2207,9 @@ function renderConditionsTab() {
             label: ctx => {
               const d = ctx.raw;
               if (d._name == null) return "Built = capacity";
-              return `${d._name}: ${Math.round(d._xReal).toLocaleString()} built, ${Math.round(d._yReal).toLocaleString()} capacity, ${Math.round(d._headroom).toLocaleString()} headroom`;
+              const clamped = d._xReal !== ctx.parsed.x || d._yReal !== ctx.parsed.y;
+              return `${d._name}: ${Math.round(d._xReal).toLocaleString()} built, ${Math.round(d._yReal).toLocaleString()} capacity, ${Math.round(d._headroom).toLocaleString()} headroom` +
+                (clamped ? " (pinned to chart edge — off the shown range)" : "");
             },
           },
         },
