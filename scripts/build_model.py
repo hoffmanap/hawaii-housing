@@ -1354,6 +1354,19 @@ def run_tod_scenario(
     realism caveat applies to a TOD parcel actually being built without a
     parking minimum, not just the ADU scenario.
     """
+    # Validate the county/mode combination before any file I/O -- a county
+    # or mode this project hasn't sourced real transit data for should fail
+    # with NotImplementedError regardless of whether build outputs happen
+    # to exist yet, not get masked by a FileNotFoundError about a step that
+    # was never going to succeed anyway. (tod_eligible_parcels() re-checks
+    # this itself, but by then it's too late to pre-empt the file check
+    # below.)
+    available_modes = TOD_TRANSIT_MODES_BY_COUNTY.get(county, {})
+    if mode not in available_modes:
+        raise NotImplementedError(
+            f"No '{mode}' transit-stop data for {county} -- available mode(s): {list(available_modes) or ['none']}."
+        )
+
     cfg = COUNTY_CONFIG[county]
     pid = cfg["parcel_id_field"]
     parcel_path = OUT_DIR / f"{county}_parcel_level.csv"
@@ -2799,6 +2812,8 @@ def tract_affordability_constrained_capacity(
     """
     rows = []
     if tenure == "for_sale":
+        if sales_feasibility_df is None:
+            raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
         path = income_csv or (RAW_DIR / "acs_income_distribution_kauai.csv")
         if not path.exists():
             raise RuntimeError(
@@ -2806,8 +2821,6 @@ def tract_affordability_constrained_capacity(
                 "--county kauai` first (needs CENSUS_API_KEY)."
             )
         income = pd.read_csv(path, dtype={"GEOID": str})
-        if sales_feasibility_df is None:
-            raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
         feas = sales_feasibility_df.copy()
         feas["GEOID"] = feas["GEOID"].astype(str)
         merged = income.merge(feas[["GEOID", "scaled_sale_price_usd"]], on="GEOID", how="inner")

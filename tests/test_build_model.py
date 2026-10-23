@@ -255,16 +255,20 @@ def test_owner_occupancy_toggle_is_wired_for_kauai_specifically():
     )
 
 
-def test_tod_scenario_rejects_non_kauai_county():
+def test_tod_scenario_rejects_county_without_transit_data():
     """
-    run_tod_scenario is explicitly Kauai-only until another county has its
-    own real transit GTFS feed sourced -- this guards against silently
+    run_tod_scenario raises NotImplementedError for any county/mode combo
+    absent from TOD_TRANSIT_MODES_BY_COUNTY -- this guards against silently
     returning a wrong/empty result for a county that has no transit data.
+
+    Honolulu itself is no longer such a county (real bus + rail GTFS was
+    sourced for it -- see TOD_TRANSIT_MODES_BY_COUNTY), so this now checks
+    Maui, which still has no entry at all.
     """
     import pytest
 
     with pytest.raises(NotImplementedError):
-        build_model.run_tod_scenario("honolulu")
+        build_model.run_tod_scenario("maui")
 
 
 def test_tod_eligibility_requires_both_stop_and_corridor_proximity():
