@@ -2060,17 +2060,53 @@ function renderConditionsTab() {
   // hundreds of units) while a handful run into the thousands, so a
   // linear axis crushes nearly every dot into the bottom-left corner.
   // Chart.js's logarithmic scale can't plot a true zero, so points are
-  // floored to 1 for PLOTTING only -- the tooltip and the real value
-  // (_xReal/_yReal) always show the actual number, including a true 0.
-  const LOG_FLOOR = 1;
+  // floored to the chart's own axis minimum for PLOTTING only -- the
+  // tooltip and the real value (_xReal/_yReal) always show the actual
+  // number, including a true 0.
+  //
+  // DYNAMIC, DECADE-ROUNDED BOUNDS, added 2026-10-22 per direct follow-up
+  // ("dots off the chart... scales should be more rounded numbers with
+  // equidistant spacing and dynamic axes... chart fit should be the
+  // goal"): the axis range used to be fixed (always ~1-10,000) regardless
+  // of what was actually on screen, so filtering to one county (e.g.
+  // Kaua'i, whose tracts top out around 10,000) left most of the chart
+  // empty on the low end while points still crowded the top-right corner.
+  // The range is now computed from the CURRENTLY SHOWN rows (scatterRows,
+  // which already reflects the county filter), rounded OUT to the
+  // nearest "nice" 1-2-5-10 step (not a full power of 10 -- rounding a
+  // value just over 10,000 straight to 100,000 wastes 90% of the chart,
+  // so this steps through 1/2/5x each decade instead: 1,000 / 2,000 /
+  // 5,000 / 10,000 / 20,000 / ...), refitting on every filter change
+  // rather than staying pinned to the full dataset's range. The SAME
+  // bounds are used for both axes (not fit independently) so the y=x
+  // reference line stays a true 45-degree diagonal.
+  const scatterVals = scatterRows.flatMap(r => [r.existing_units_built || 0, r.existing_zoned_capacity_total || 0]).filter(v => v > 0);
+  const niceCeilLog = v => {
+    if (v <= 0) return 1;
+    const e = Math.floor(Math.log10(v));
+    const mantissa = v / Math.pow(10, e);
+    const step = [1, 2, 5, 10].find(s => s >= mantissa - 1e-9) ?? 10;
+    return step * Math.pow(10, e);
+  };
+  const niceFloorLog = v => {
+    if (v <= 0) return 1;
+    const e = Math.floor(Math.log10(v));
+    const mantissa = v / Math.pow(10, e);
+    let step = 1;
+    for (const s of [1, 2, 5]) { if (s <= mantissa + 1e-9) step = s; }
+    return step * Math.pow(10, e);
+  };
+  let axisMin = niceFloorLog(scatterVals.length ? Math.min(...scatterVals) : 1);
+  let axisMax = niceCeilLog(scatterVals.length ? Math.max(...scatterVals) : 10);
+  if (axisMin >= axisMax) axisMax = niceCeilLog(axisMin * 2); // guard against a degenerate dataset
   const scatterDatasets = Object.keys(byCounty)
     .filter(c => scatterRows.some(r => r.county === c))
     .map(c => ({
       type: "bubble",
       label: byCounty[c].label || c,
       data: scatterRows.filter(r => r.county === c).map(r => ({
-        x: Math.max(LOG_FLOOR, r.existing_units_built || 0),
-        y: Math.max(LOG_FLOOR, r.existing_zoned_capacity_total || 0),
+        x: Math.max(axisMin, r.existing_units_built || 0),
+        y: Math.max(axisMin, r.existing_zoned_capacity_total || 0),
         r: bubbleR(r.existing_zoned_headroom),
         _name: labelOf(r),
         _xReal: r.existing_units_built || 0,
@@ -2081,11 +2117,10 @@ function renderConditionsTab() {
       borderColor: COUNTY_COLOR[c] || "#5c5748",
       borderWidth: 1,
     }));
-  const scatterMax = Math.max(10, ...scatterRows.map(r => Math.max(r.existing_units_built || 0, r.existing_zoned_capacity_total || 0)));
   scatterDatasets.push({
     type: "line",
     label: "Built = capacity (no headroom)",
-    data: [{ x: LOG_FLOOR, y: LOG_FLOOR }, { x: scatterMax, y: scatterMax }],
+    data: [{ x: axisMin, y: axisMin }, { x: axisMax, y: axisMax }],
     borderColor: "#5c5748",
     borderDash: [5, 4],
     borderWidth: 1.5,
@@ -2093,14 +2128,55 @@ function renderConditionsTab() {
     fill: false,
     order: 99,
   });
+  // Annotate the two sides of the reference line, added 2026-10-22 per
+  // direct follow-up ("annotate the areas above and below the line...
+  // this is what the chart is about"). By this model's own definition
+  // (zoned_capacity_total = existing_units_built + headroom, headroom
+  // clipped at 0) capacity can never be LESS than what's built, so every
+  // point sits on or above the line -- there genuinely is no "under
+  // capacity" region with real tracts in it, and this is stated outright
+  // (bottom-right note) rather than drawing a fake annotation for a
+  // region nothing ever falls into. The real content is the single
+  // region that does exist: a light tint + label over "above the line,"
+  // the area that IS this chart's subject (unused legal headroom).
+  const headroomZonePlugin = {
+    id: "headroomZone",
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea: { left, right, top, bottom } } = chart;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(left, top);
+      ctx.lineTo(right, top);
+      ctx.lineTo(left, bottom);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(31,163,138,0.08)";
+      ctx.fill();
+      ctx.restore();
+    },
+    afterDraw(chart) {
+      const { ctx, chartArea: { left, right, top, bottom } } = chart;
+      ctx.save();
+      ctx.font = "600 11.5px Archivo, sans-serif";
+      ctx.fillStyle = "#1fa38a";
+      ctx.textBaseline = "top";
+      ctx.fillText("↑ Above the line: unused zoned capacity (headroom)", left + 10, top + 8);
+      ctx.font = "500 10.5px Archivo, sans-serif";
+      ctx.fillStyle = "#5c5748";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("No tract falls below the line — capacity is defined as built + headroom, never less than built", right - 8, bottom - 8);
+      ctx.restore();
+    },
+  };
   if (capacityScatterChart) capacityScatterChart.destroy();
   capacityScatterChart = new Chart(document.getElementById("capacityScatterChart").getContext("2d"), {
     type: "bubble",
     data: { datasets: scatterDatasets },
+    plugins: [headroomZonePlugin],
     options: {
       scales: {
-        x: { type: "logarithmic", title: { display: true, text: "Units built (est.), log scale" } },
-        y: { type: "logarithmic", title: { display: true, text: "Zoned capacity, total — log scale" } },
+        x: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Units built (est.), log scale" } },
+        y: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Zoned capacity, total — log scale" } },
       },
       plugins: {
         tooltip: {
