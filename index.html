@@ -567,6 +567,7 @@
           export, the one full year before the 2020 permitting disruption.</p>
         </div>
         <canvas id="absorptionRateChart"></canvas>
+        <div id="absorption-rate-math" style="margin-top:14px;"></div>
       </div>
       <div class="takeaway">
         <p class="stat-line" id="absorption-rate-stat"></p>
@@ -580,23 +581,26 @@
       </div>
     </div>
 
-    <div class="conditions-section">
-      <div>
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Where a $50,000 development fee actually sits, in a real pro forma</p>
-          <p class="chart-deck">The same cost build-up the feasibility gate's formula runs, charted as a
-          stack for one example unit (1,500 GSF, Lihu'e Town Core pro forma): hard cost, soft cost, land
-          cost, financing, and the Challenge's standardized development fee, against the sale price that
-          build-up has to clear.</p>
+          <p class="chart-headline">Construction costs aren't one statewide number — Kaua'i vs. Honolulu</p>
+          <p class="chart-deck">The same feasibility-gate cost build-up, run for the same product (a 840
+          GSF low-rise for-sale unit — the one typology the source table prices for both sites) on each
+          county's own real, separately-sourced submarket figures: Kaua'i's Lihu'e Town Core column and
+          Honolulu's Iwilei-Kapalama column, same OPSD Real Estate Assumptions table. Land cost is the
+          biggest gap by far — Honolulu's urban TOD-corridor land comps run roughly 6x Lihu'e's.</p>
         </div>
-        <canvas id="costProFormaChart"></canvas>
+        <canvas id="costProFormaChart" height="110"></canvas>
       </div>
-      <div class="takeaway">
+      <div class="takeaway" style="grid-column:1/-1;">
         <p class="stat-line" id="cost-proforma-stat"></p>
-        <p class="stat-line"><strong>Grounds:</strong> these are the exact figures in the Development Fee
-        &amp; Feasibility Gate formula on the Methodology tab (State of Hawaii OPSD Real Estate
-        Assumptions table, Lihu'e Town Core column) — this chart is that formula run once, on one example
-        unit, so the shape of the cost stack is visible rather than only its line-by-line arithmetic.</p>
+        <p class="stat-line"><strong>Grounds:</strong> these are the exact per-county figures in the
+        Development Fee &amp; Feasibility Gate formula on the Methodology tab (State of Hawaii OPSD Real
+        Estate Assumptions table — Lihu'e Town Core and Iwilei-Kapalama columns) — this chart runs that
+        formula once per county on one example unit, using the Challenge's standardized $50,000
+        development fee for both, so the comparison isolates the real geographic cost difference rather
+        than mixing in each county's own (different) actual fee schedule.</p>
       </div>
     </div>
 
@@ -731,10 +735,13 @@
         <div class="chart-head">
           <p class="chart-headline">Every tract, one dot each — built vs. zoned capacity</p>
           <p class="chart-deck">Every tract (or place) plotted at once: how many units already exist
-          (x-axis) against how many today's zoning already allows with no reform (y-axis). The dashed line
-          is <i>built = capacity</i> — a tract sitting right on it has no legal headroom left; the further
-          above the line, the more unused capacity today's zoning already grants. Dot size scales with
-          headroom. Hover a dot for the tract's numbers; drag to zoom, double-click to reset.</p>
+          (x-axis) against how many today's zoning already allows with no reform (y-axis). Both axes are
+          <b>log scale</b> — most tracts hold a few dozen to a few hundred units, with a handful running
+          into the thousands, so a plain linear axis crushes nearly everything into one corner. The dashed
+          line is <i>built = capacity</i> — a tract sitting right on it has no legal headroom left; the
+          further above the line, the more unused capacity today's zoning already grants. Dot size scales
+          with headroom. Hover a dot for the tract's real numbers (a tract with 0 built or 0 capacity is
+          plotted at the axis floor, not dropped).</p>
         </div>
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
           <label style="font-size:12.5px;">County: <select id="conditions-scatter-county-filter">
@@ -2048,27 +2055,37 @@ function renderConditionsTab() {
   const maxHeadroomAll = Math.max(1, ...scatterAllRows.map(r => r.existing_zoned_headroom || 0));
   const bubbleR = h => 3 + 13 * Math.sqrt(Math.max(0, h || 0) / maxHeadroomAll);
   const COUNTY_COLOR = { kauai: "#2e6fd9", honolulu: "#ff5a5f" };
+  // LOG SCALE, added 2026-10-22 per direct feedback ("all of the points
+  // are bunched into one quadrant"): most tracts are small (tens to low
+  // hundreds of units) while a handful run into the thousands, so a
+  // linear axis crushes nearly every dot into the bottom-left corner.
+  // Chart.js's logarithmic scale can't plot a true zero, so points are
+  // floored to 1 for PLOTTING only -- the tooltip and the real value
+  // (_xReal/_yReal) always show the actual number, including a true 0.
+  const LOG_FLOOR = 1;
   const scatterDatasets = Object.keys(byCounty)
     .filter(c => scatterRows.some(r => r.county === c))
     .map(c => ({
       type: "bubble",
       label: byCounty[c].label || c,
       data: scatterRows.filter(r => r.county === c).map(r => ({
-        x: r.existing_units_built || 0,
-        y: r.existing_zoned_capacity_total || 0,
+        x: Math.max(LOG_FLOOR, r.existing_units_built || 0),
+        y: Math.max(LOG_FLOOR, r.existing_zoned_capacity_total || 0),
         r: bubbleR(r.existing_zoned_headroom),
         _name: labelOf(r),
+        _xReal: r.existing_units_built || 0,
+        _yReal: r.existing_zoned_capacity_total || 0,
         _headroom: r.existing_zoned_headroom || 0,
       })),
       backgroundColor: (COUNTY_COLOR[c] || "#5c5748") + "99",
       borderColor: COUNTY_COLOR[c] || "#5c5748",
       borderWidth: 1,
     }));
-  const scatterMax = Math.max(1, ...scatterRows.map(r => Math.max(r.existing_units_built || 0, r.existing_zoned_capacity_total || 0)));
+  const scatterMax = Math.max(10, ...scatterRows.map(r => Math.max(r.existing_units_built || 0, r.existing_zoned_capacity_total || 0)));
   scatterDatasets.push({
     type: "line",
     label: "Built = capacity (no headroom)",
-    data: [{ x: 0, y: 0 }, { x: scatterMax, y: scatterMax }],
+    data: [{ x: LOG_FLOOR, y: LOG_FLOOR }, { x: scatterMax, y: scatterMax }],
     borderColor: "#5c5748",
     borderDash: [5, 4],
     borderWidth: 1.5,
@@ -2082,8 +2099,8 @@ function renderConditionsTab() {
     data: { datasets: scatterDatasets },
     options: {
       scales: {
-        x: { title: { display: true, text: "Units built (est.)" } },
-        y: { title: { display: true, text: "Zoned capacity, total" } },
+        x: { type: "logarithmic", title: { display: true, text: "Units built (est.), log scale" } },
+        y: { type: "logarithmic", title: { display: true, text: "Zoned capacity, total — log scale" } },
       },
       plugins: {
         tooltip: {
@@ -2091,7 +2108,7 @@ function renderConditionsTab() {
             label: ctx => {
               const d = ctx.raw;
               if (d._name == null) return "Built = capacity";
-              return `${d._name}: ${Math.round(d.x).toLocaleString()} built, ${Math.round(d.y).toLocaleString()} capacity, ${Math.round(d._headroom).toLocaleString()} headroom`;
+              return `${d._name}: ${Math.round(d._xReal).toLocaleString()} built, ${Math.round(d._yReal).toLocaleString()} capacity, ${Math.round(d._headroom).toLocaleString()} headroom`;
             },
           },
         },
@@ -2243,46 +2260,112 @@ function renderAssumptionsTab() {
   });
   document.getElementById("absorption-rate-stat").textContent = moves.join("  •  ");
 
-  // -- Construction cost pro forma, one example unit --
-  // Exact constants from the Development Fee & Feasibility Gate formula on
-  // the Methodology tab (State of Hawaii OPSD Real Estate Assumptions
-  // table, Lihu'e Town Core column) -- not re-derived here, just charted.
-  const unitGsf = 1500;
-  const hardCost = unitGsf * 420;              // $420/GSF
-  const softCost = hardCost * 0.15;
-  const landCost = unitGsf * 36;                // $36/building-GSF
-  const loanAmount = (hardCost + softCost + landCost) * 0.60;
-  const financingCost = loanAmount * 0.07 * 2 * 0.5 + loanAmount * 0.025;
-  const developmentFee = 50000;                 // Challenge-mandated standardized fee
-  const totalCost = hardCost + softCost + landCost + financingCost + developmentFee;
-  const referencePrice = 1_179_403;              // Lihu'e reference townhome market sale price, OPSD table
-  const requiredProfit = referencePrice * 0.15;
-  const excessValue = referencePrice - totalCost - requiredProfit;
+  // -- Show the actual arithmetic, not just the bar result. Added
+  // 2026-10-22 per direct feedback ("this is where we show the math...
+  // so we should show how these numbers were derived, not just the
+  // result"): the bar chart above only shows decade_equivalent_pct, the
+  // LAST step of a 3-step calculation -- annual permits, divided by
+  // housing stock, times 10 years. This renders that chain explicitly,
+  // per county, for both the blended and pre-COVID figures.
+  document.getElementById("absorption-rate-math").innerHTML = counties.map(c => {
+    const d = byCounty[c].absorption_rate_benchmark_detail;
+    const row = (label, permits, decade) => {
+      if (permits == null || decade == null) return "";
+      const annualRate = decade / 10;
+      return `
+        <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:12px;font-family:ui-monospace,monospace;">
+          <span style="width:120px;font-family:'Archivo',sans-serif;font-weight:600;flex-shrink:0;">${label}</span>
+          <span>${Math.round(permits).toLocaleString()} permits/yr</span>
+          <span style="color:var(--muted);">÷</span>
+          <span>${Math.round(d.housing_units_2023).toLocaleString()} housing units</span>
+          <span style="color:var(--muted);">×</span>
+          <span>100 = ${annualRate.toFixed(2)}%/yr</span>
+          <span style="color:var(--muted);">×</span>
+          <span>10 yrs =</span>
+          <span style="font-weight:700;">${decade}%</span>
+        </div>`;
+    };
+    return `
+      <div style="border:1.5px dashed var(--line);border-radius:4px;padding:8px 10px;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:4px;">${byCounty[c].label} — the arithmetic</div>
+        ${row("Blended", d.avg_annual_permits_2016_2025, d.decade_equivalent_pct_10yr)}
+        ${row("Pre-COVID", d.avg_annual_permits_2019_precovid, d.decade_equivalent_pct_2019_precovid)}
+      </div>`;
+  }).join("");
+
+  // -- Construction cost pro forma, Kaua'i vs. Honolulu, same typology. --
+  // REWORKED 2026-10-22 per direct question ("do the numbers fluctuate
+  // by county?... would it be best to show the costs by county"): this
+  // used to chart only Kaua'i's Lihu'e Town Core column. They DO fluctuate
+  // -- real, separately-sourced figures already exist for Honolulu's
+  // Iwilei-Kapalama submarket (OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS in
+  // build_model.py, same source report, same page), just never charted
+  // here. Both counties run on "lowrise_for_sale" (840 GSF) -- the one
+  // typology the source table actually populates for BOTH sites (Kaua'i's
+  // townhome_for_sale product has no Oahu equivalent in the source).
+  // Financing terms and the 15% profit margin are the source's own
+  // "Shared Assumptions," identical across sites, not something that
+  // varies here. Development fee held at the Challenge's standardized
+  // $50,000 for both, so the comparison isolates the real cost gap,
+  // not a fee-schedule difference (Honolulu's own real fee schedule is
+  // used elsewhere, in its own development-fee scenario).
+  const unitGsf = 840;
+  const developmentFee = 50000;
+  const PROFORMA_BY_COUNTY = {
+    kauai: {
+      label: "Kaua'i (Lihu'e Town Core)",
+      color: "#2e6fd9",
+      hardCostPerGsf: 594,            // lowrise_for_sale, KAUAI_LIHUE_PRO_FORMA_INPUTS
+      landPricePerGsf: 36,
+      salePrice: 637_974,             // lowrise_for_sale market sale price
+    },
+    honolulu: {
+      label: "Honolulu (Iwilei-Kapalama)",
+      color: "#ff5a5f",
+      hardCostPerGsf: 475,            // lowrise_for_sale, OAHU_IWILEI_KAPALAMA_PRO_FORMA_INPUTS
+      landPricePerGsf: 225,
+      salePrice: 646_800,             // lowrise_for_sale market sale price
+    },
+  };
+  const proformaResults = Object.fromEntries(Object.entries(PROFORMA_BY_COUNTY).map(([c, cfg]) => {
+    const hardCost = unitGsf * cfg.hardCostPerGsf;
+    const softCost = hardCost * 0.15;
+    const landCost = unitGsf * cfg.landPricePerGsf;
+    const loanAmount = (hardCost + softCost + landCost) * 0.60;
+    const financingCost = loanAmount * 0.07 * 2 * 0.5 + loanAmount * 0.025;
+    const totalCost = hardCost + softCost + landCost + financingCost + developmentFee;
+    const requiredProfit = cfg.salePrice * 0.15;
+    const excessValue = cfg.salePrice - totalCost - requiredProfit;
+    return [c, { hardCost, softCost, landCost, financingCost, totalCost, requiredProfit, excessValue, salePrice: cfg.salePrice }];
+  }));
   if (costProFormaChart) costProFormaChart.destroy();
+  const proformaLabels = ["Hard cost", "Soft cost (15%)", "Land cost", "Financing", "Development fee ($50k)", "Required profit (15%)", "Sale price (reference)"];
   costProFormaChart = new Chart(document.getElementById("costProFormaChart").getContext("2d"), {
     type: "bar",
     data: {
-      labels: ["Hard cost", "Soft cost (15%)", "Land cost", "Financing", "Development fee", "Required profit (15%)", "Sale price (reference)"],
-      datasets: [{
-        label: "USD",
-        data: [hardCost, softCost, landCost, financingCost, developmentFee, requiredProfit, referencePrice],
-        backgroundColor: ["#2e6fd9", "#2e6fd9", "#2e6fd9", "#2e6fd9", "#ff5a5f", "#5c5748", "#1fa38a"]
-      }]
+      labels: proformaLabels,
+      datasets: Object.entries(PROFORMA_BY_COUNTY).map(([c, cfg]) => {
+        const r = proformaResults[c];
+        return {
+          label: cfg.label,
+          data: [r.hardCost, r.softCost, r.landCost, r.financingCost, developmentFee, r.requiredProfit, r.salePrice],
+          backgroundColor: cfg.color,
+        };
+      }),
     },
     options: {
       indexAxis: "y",
       plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `$${Math.round(ctx.parsed.x).toLocaleString()}` } }
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${Math.round(ctx.parsed.x).toLocaleString()}` } }
       },
-      scales: { x: { title: { display: true, text: "USD, one 1,500 GSF example unit" } } }
+      scales: { x: { title: { display: true, text: "USD, one 840 GSF low-rise-for-sale example unit" } } }
     }
   });
-  document.getElementById("cost-proforma-stat").textContent =
-    `Total development cost: $${Math.round(totalCost).toLocaleString()}  •  ` +
-    `Required profit: $${Math.round(requiredProfit).toLocaleString()}  •  ` +
-    `Excess value at the reference sale price: $${Math.round(excessValue).toLocaleString()} ` +
-    (excessValue >= 0 ? "(pencils)" : "(does not pencil)");
+  document.getElementById("cost-proforma-stat").textContent = Object.entries(PROFORMA_BY_COUNTY).map(([c, cfg]) => {
+    const r = proformaResults[c];
+    return `${cfg.label}: total cost $${Math.round(r.totalCost).toLocaleString()}, excess value ` +
+      `$${Math.round(r.excessValue).toLocaleString()} ${r.excessValue >= 0 ? "(pencils)" : "(does not pencil)"}`;
+  }).join("  •  ");
 
   // -- Over time: countywide rent (ZORI) and real sales trend together,
   // ONE LINE PAIR PER COUNTY -- moved here from Existing Conditions
