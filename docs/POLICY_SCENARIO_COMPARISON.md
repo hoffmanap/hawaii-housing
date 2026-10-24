@@ -1,37 +1,54 @@
 # Policy Scenario Comparison
 
-This is a required deliverable and the basis for the Policy Insight &
-Interpretation criterion. Rank the benchmark scenarios you addressed, explain what drives the differences, identify which assumptions matter most, and be honest about what the tool cannot say.
-
-You must address at least three of the five benchmark scenarios:
-
-1. Status Quo (Baseline)
-1. Missing Middle / Gentle Density
-1. Transit-Oriented Density
-1. Parking Requirement Reduction
-1. Development Fee Reduction
+This is a required deliverable and the basis for the Policy Insight & Interpretation criterion. All figures below are reproducible by running the referenced function in `scripts/build_model.py` against this repo's current data; see `docs/MODEL_AND_ASSUMPTIONS.md` for the full methodology and `docs/DATA_PROVENANCE.md` for every underlying data source.
 
 # Scenarios Addressed
 
-[List the scenarios you modeled. If you defined additional scenarios with your mentor, list them here too.]
+Four of the five benchmark scenarios are modeled end-to-end, for both counties this tool covers (Honolulu/O'ahu and Kaua'i County):
+
+1. **Status Quo (Baseline)** — `existing_zoned_capacity_tract()`
+2. **Missing Middle / Gentle Density** — `run_missing_middle_scenario()`
+3. **Transit-Oriented Density** — modeled two distinct ways, deliberately not combined (see "What Drives the Differences" below): `honolulu_tod_overlay_capacity_tract()` (Honolulu's real adopted city rezoning) and `run_tod_scenario()` (the 2025 statewide FAR-bonus statute)
+4. **Parking Requirement Reduction** — `kauai_parking_reform_context()` / `honolulu_parking_reform_context()`
+5. **Development Fee Reduction** — `run_development_fee_reduction_scenario()`
+
+A sixth scenario beyond the required five, **ADU/Ohana**, is also modeled (`run_adu_scenario()`) — Hawaii's ADU mandate (Act 39) is enacted current law, so it's folded into the Baseline's own capacity figure rather than reported as a separate reform, but it's shown on its own below because it's the scenario this project found the most to calibrate against real data.
 
 # Ranking of Results
 
-[Rank the scenarios by their modeled effect on housing supply, relative to the baseline. A table is the clearest format.]
+| Scenario | Kaua'i | Honolulu | Confidence | Notes |
+| -------- | ------ | -------- | ---------- | ----- |
+| **Baseline** (current law, incl. ADU mandate) | 52,231 total zoned capacity (19,413 built + 32,818 unused legal headroom) | 444,926 total zoned capacity (308,242 built + 136,684 unused legal headroom) | High | Not a reform — the reference point every other row is measured against |
+| **Missing Middle** (upzoning single-family-restricted parcels) | +4,095.5 additional units (13,104 eligible parcels) | +33,001.2 additional units (141,213 eligible parcels) | Medium | Largest *modeled unit-count* reform in both counties |
+| **TOD — Honolulu's real adopted rezoning** | *Not applicable — no fixed-guideway transit* | **86,191 gross capacity** (529 parcels; this is NOT yet absorption-scaled — see caveat below) | Medium-High for the footprint/FAR math, Low for how much of it would actually get built | The only TOD figure built from real, adopted law + real FAR tables, not a distance proxy |
+| **TOD — statewide FAR-bonus statute (Act 159/HB1409)** | Not reported here — known to overstate (see caveat) | Not reported here — known to overstate (see caveat) | **Low — deliberately excluded from this ranking** | `run_tod_scenario()`'s distance-buffer eligibility produces implausibly large gross-capacity figures for both counties; included in the Scenario Explorer for exploration, not treated here as a defensible comparison point |
+| **Parking Requirement Reduction** | Qualitative: "likely at or below the low end (3.0–6.2% parking-supply reduction)," based on comparable-density cities in a real multi-city study | Qualitative: "~15.3% observed parking-supply reduction," directly from the same study's own Honolulu TOD-district data point | Medium (Honolulu, in-sample) / Low-Medium (Kaua'i, extrapolated) | **Deliberately not a unit-count figure** — see below |
+| **Development Fee Reduction** | $7.24M (ADU baseline) + $204.78M (Missing Middle intervention) in fee savings on already-eligible units | $105.92M (ADU baseline) + $1,650.06M (Missing Middle intervention) in fee savings on already-eligible units | High (the dollar math) / Not applicable (no production-increase estimate) | **Deliberately not a unit-count figure** — see below |
+| **ADU/Ohana** (shown separately; folded into Baseline above) | +144.7 estimated units (2,297 eligible parcels, generic county absorption rate) | +2,118.3 estimated units (136,684 eligible parcels, **real permit-calibrated** absorption rate) | Medium (Kaua'i) / Medium-High (Honolulu) | The only scenario with a real, permit-data-calibrated absorption rate, for Honolulu only |
 
-| Scenario | Modeled effect vs. baseline | Confidence | Notes |
-| -------- | --------------------------- | ---------- | ----- |
-| [name]   | [e.g., +X units, or a range] | [low/med/high] | [context] |
+**Why three rows have no single number, by design, not by omission:** Development Fee Reduction and Parking Requirement Reduction are reported in the units that are actually defensible (dollars; a qualitative, study-anchored direction and rough magnitude) rather than converted into a unit-count estimate this model cannot responsibly produce — see "What the Tool Cannot Say" below. The statewide TOD statute row is excluded from the ranking outright because its current implementation is already known to produce an implausible result (see next section) — reporting it here as if it were comparable to the other rows would misrepresent it.
 
 # What Drives the Differences
 
-[For each scenario, explain what in your model produces the result — which
-assumptions, data, or mechanics. Tie the numbers back to causes.]
+- **Missing Middle's size comes from its eligibility rule's breadth, not an aggressive reform assumption.** It targets every parcel currently zoned single-family-only inside the Urban State Land Use District — by far the largest eligible population of any scenario (141,213 parcels in Honolulu alone) — multiplied by each county's generic absorption-rate benchmark (5.0% Honolulu, 6.3% Kaua'i).
+- **The two TOD figures differ because they model two different laws, not two estimates of the same thing.** `honolulu_tod_overlay_capacity_tract()` uses the real, as-adopted City Council rezoning (186 real polygons) and the Revised Ordinances of Honolulu's actual FAR tables for each parcel's real rezoned code — a narrow, specific footprint (529 parcels) with real, not assumed, FAR values. `run_tod_scenario()` instead buffers around every real transit stop and assigns FAR by a statute-defined distance tier — a much broader footprint (4,408–135,937 parcels depending on county/mode) that this project has already flagged, in `docs/MODEL_AND_ASSUMPTIONS.md`'s Known Limitations, as producing an implausible result for the same reason the old Existing Conditions TOD card was rebuilt: the eligibility footprint is far too permissive relative to what's actually been adopted into law.
+- **Honolulu's ADU figure is noticeably smaller, in relative terms, than it would be under the generic benchmark** (2,118 units at a real 1.55% absorption rate vs. ~6,834 units the generic 5.0% county benchmark would have produced) — because the real, permit-calibrated rate measures something narrower and more specific (actual ADU permits against ADU-*eligible* parcels) than the generic rate (all housing permits against total housing *stock*). See `docs/DATA_PROVENANCE.md` for the full calibration.
+- **Parking and Development Fee Reduction don't produce unit-count figures at all, on principle.** Both reforms change project *economics* (land freed up, dollars saved), not legal *eligibility* — translating either into "more units get built" requires a price-elasticity-of-housing-supply estimate. Real elasticity estimates exist in the planning literature, but they are city-specific and methodology-dependent; applying one from another market to Hawai'i without a Hawai'i-specific source would be exactly the kind of fabricated-sounding-but-ungrounded number this project's governing principle rules out. Parking Reduction instead reports the real multi-city study's own observed percentage effect (Honolulu is actually *in* that study's sample as a real data point); Development Fee Reduction reports the one unambiguous number available — total dollar savings on units that are already otherwise eligible.
 
 # Which Assumptions Matter Most
 
-[Identify the assumptions that most influence the ranking. If a reviewer could change one input and flip the results, name it.]
+In order of how much they move the ranking, if a reviewer wanted to stress-test it:
+
+1. **Absorption rate.** This is a direct multiplier on every unit-count scenario's headline figure. Swapping Honolulu's ADU scenario from the real permit-calibrated rate (1.55%) back to the generic county benchmark (5.0%) more than triples that row's result (2,118 → ~6,834 units) with no other input changed — see `docs/MODEL_AND_ASSUMPTIONS.md`'s Sensitivity Notes for the exact figures.
+2. **TOD eligibility footprint (distance buffer vs. real adopted rezoning).** This is the single largest magnitude swing in the model's history: the same underlying mechanism (TOD-area density bonus) produces 86,191 gross units under the real-adopted-rezoning footprint versus a now-retired distance-buffer estimate that ran to roughly 1.44M units for the same scenario, a >16x difference from redefining "eligible" alone.
+3. **Minimum lot size (ADU scenario).** Sweeping Kaua'i's `min_lot_sqft` parameter from 5,000 to 15,000 sqft changes eligible parcels by more than 5x (15,395 down to 3,020).
+4. **Whether a scenario's capacity figure has been absorption-scaled yet.** The TOD row above (86,191) is explicitly *gross* capacity, not yet multiplied down by a realistic build-out pace — a reviewer comparing it directly against Missing Middle's *already absorption-scaled* 33,001 would be comparing two different kinds of number. This is flagged in the table above for exactly this reason.
 
 # What the Tool Cannot Say
 
-[State the limits of your comparison. What questions do policymakers have that this tool does not answer? Where would over-interpreting the results be a mistake?]
+- **It cannot say how many units Parking Requirement Reduction or Development Fee Reduction would actually produce.** Both rows above are deliberately qualitative/dollar-denominated rather than unit counts, because this model has no Hawaii-specific price-elasticity-of-housing-supply estimate to convert "cost saved" or "parking removed" into "units built," and manufacturing one from another market's data would be exactly the kind of ungrounded number this project refuses to produce.
+- **It cannot give a single defensible statewide TOD figure.** The real-adopted-rezoning figure (86,191) is Honolulu-only and legally specific to the city's own rezoning; the statewide statute's own modeled figure (`run_tod_scenario()`) is known to overstate and is excluded from this comparison.
+- **It covers only two of Hawaii's four counties.** Hawai'i County and Maui County are not built into this model's pipeline at all — any statewide total implied by this document should be read as "Honolulu + Kaua'i," not all four counties.
+- **It cannot say how much of any scenario's capacity would get built by any specific year.** Absorption rates here are historical permit-pace benchmarks (and, for Honolulu's ADU scenario, a real scenario-specific calibration), not a forecast tied to a calendar year — they answer "at this area's historical build pace, roughly how much of this legal capacity would plausibly get built," not "by 2030, X units will exist."
+- **It would be a mistake to read the TOD gross-capacity figure (86,191) as directly comparable to any other row's absorption-scaled figure** without first applying a comparable realism discount — see "Which Assumptions Matter Most" above.
+- **It cannot speak to affordability, displacement, or who would actually live in any of this capacity** — those are explicitly out of scope per `docs/MODEL_AND_ASSUMPTIONS.md`'s Purpose and Scope, beyond the narrow income-distribution-based affordability gate available on a subset of scenarios.
