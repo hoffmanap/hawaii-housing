@@ -286,6 +286,78 @@ def absorption_rate_benchmark_detail(county: str) -> dict:
     }
 
 
+# Honolulu's real permit-level ADU/Ohana data (data.honolulu.gov Socrata,
+# see fetch_honolulu_adu_permits() in fetch_data.py) covers only through
+# mid-2025 as pulled 2026-10-23 -- 2025 is a partial year in this export
+# (Jan-Jul only), so the "complete years" average below excludes it rather
+# than understating the true annual rate with a half-year total.
+HONOLULU_ADU_PERMITS_COMPLETE_YEARS = range(2016, 2025)  # 2016-2024 inclusive
+
+
+def honolulu_real_adu_absorption_rate() -> dict:
+    """
+    A REAL, scenario-specific absorption rate for Honolulu's ADU scenario,
+    calibrated against actual historical ADU/Ohana permit issuance --
+    replacing the generic all-housing BPS county benchmark
+    (absorption_rate_benchmark_for()) for this one scenario/county
+    combination, where real data now supports something better.
+
+    Why this is a meaningfully different (and better) number: the generic
+    benchmark is avg_annual_ALL_HOUSING_permits / TOTAL_HOUSING_STOCK --
+    a reasonable proxy when no scenario-specific data exists, but it
+    answers a different question than "what share of ADU-ELIGIBLE parcels
+    actually get an ADU permit in a given year." This function answers
+    that narrower question directly: avg_annual_REAL_ADU_permits /
+    CURRENT_ADU-ELIGIBLE_parcel_count (from run_adu_scenario("honolulu")'s
+    own baseline eligibility rule), scaled to the same 10-year
+    decade-equivalent convention used everywhere else in this model.
+
+    **This is Honolulu-only, not a new uniform methodology.** No equivalent
+    permit-level, API-accessible dataset exists for Kaua'i (confirmed by
+    search 2026-10-23 -- same gap already documented for Kaua'i's sales
+    data, which required a manual user-supplied export). Kaua'i's ADU
+    scenario keeps using the generic county benchmark. This asymmetry is
+    disclosed deliberately rather than smoothed over by forcing Honolulu
+    back onto the generic number for consistency's sake -- see
+    docs/DATA_PROVENANCE.md's "Permit-data quality varies by county"
+    entry. The real fix, if it ever becomes available, is a Kaua'i permit
+    dataset of comparable quality, not discarding Honolulu's.
+    """
+    permits_path = RAW_DIR / "honolulu_adu_permits.json"
+    if not permits_path.exists():
+        raise FileNotFoundError(
+            f"{permits_path} not found -- run `fetch_data.py --layer honolulu_adu_permits` first."
+        )
+    permits = pd.read_json(permits_path)
+    issued = permits[permits["issuedate"].notna()].copy()
+    issued["issue_year"] = pd.to_datetime(issued["issuedate"]).dt.year
+
+    complete_years = list(HONOLULU_ADU_PERMITS_COMPLETE_YEARS)
+    by_year = issued[issued["issue_year"].isin(complete_years)].groupby("issue_year").size()
+    avg_annual_real_adu_permits = by_year.reindex(complete_years, fill_value=0).mean()
+
+    # absorption_rate=0 is a throwaway value here -- this call only needs
+    # eligible_parcel_count (purely a zoning/density computation,
+    # independent of any absorption rate). Passing an explicit override
+    # also sidesteps run_adu_scenario()'s own default-rate lookup, which
+    # (once wired up below) calls back into this function -- 0 breaks
+    # that recursion rather than relying on call-order luck.
+    adu_tract, _ = run_adu_scenario("honolulu", ScenarioParams(absorption_rate=0))
+    eligible_parcel_count = int(adu_tract["eligible_parcel_count"].sum())
+
+    decade_equivalent_pct = 100.0 * 10.0 * avg_annual_real_adu_permits / eligible_parcel_count
+
+    return {
+        "avg_annual_real_adu_permits": round(float(avg_annual_real_adu_permits), 1),
+        "complete_years": f"{complete_years[0]}-{complete_years[-1]}",
+        "eligible_parcel_count": eligible_parcel_count,
+        "decade_equivalent_pct": round(decade_equivalent_pct, 2),
+        "absorption_rate": decade_equivalent_pct / 100.0,
+        "generic_benchmark_pct_for_comparison": round(absorption_rate_benchmark_for("honolulu") * 100.0, 1),
+        "source": "data.honolulu.gov Socrata building permits (4vab-c87q), ohana='Y' OR accessorydwellingunitadu='Y'",
+    }
+
+
 def _load_geojson(path: Path) -> gpd.GeoDataFrame:
     data = json.loads(path.read_text())
     records = []
@@ -504,9 +576,22 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         raise FileNotFoundError(f"Run build_county('{county}') first -- {parcel_path} not found")
     parcel_table = pd.read_csv(parcel_path)
 
-    absorption_rate = (
-        params.absorption_rate if params.absorption_rate is not None else absorption_rate_benchmark_for(county)
-    )
+    # Honolulu gets a real, ADU-specific absorption rate (calibrated against
+    # its own ADU/Ohana permit history -- see honolulu_real_adu_absorption_
+    # rate()'s docstring) instead of the generic all-housing county
+    # benchmark every other county/scenario combination uses. This is a
+    # deliberate asymmetry, not an oversight -- Kaua'i has no equivalent
+    # permit-level dataset, so it keeps the generic benchmark. The 0 passed
+    # to the lookup call inside that function prevents infinite recursion;
+    # don't remove it.
+    absorption_rate_source = "county_generic_benchmark"
+    if params.absorption_rate is not None:
+        absorption_rate = params.absorption_rate
+    elif county == "honolulu" and (RAW_DIR / "honolulu_adu_permits.json").exists():
+        absorption_rate = honolulu_real_adu_absorption_rate()["absorption_rate"]
+        absorption_rate_source = "honolulu_real_adu_permits"
+    else:
+        absorption_rate = absorption_rate_benchmark_for(county)
 
     cfg = COUNTY_CONFIG[county]
     # Each county's own confirmed default, not one figure applied
@@ -561,6 +646,7 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         "min_lot_sqft": min_lot_sqft,
         "absorption_rate": absorption_rate,
         "absorption_rate_was_county_benchmark": params.absorption_rate is None,
+        "absorption_rate_source": absorption_rate_source,
         "require_owner_occupancy": params.require_owner_occupancy,
         "require_parking": params.require_parking,
         "allow_non_single_family_zones": params.allow_non_single_family_zones,

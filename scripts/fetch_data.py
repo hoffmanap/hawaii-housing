@@ -61,6 +61,19 @@ TOD_ZONE_CHANGE_BASE_URL = (
 )
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
+# Honolulu's live, individually-permit-level building permit dataset
+# (Socrata, data.honolulu.gov), Jan 2005-present, 432k+ records, TMK-keyed.
+# Found 2026-10-23 answering the user's question of whether real permit
+# open data exists for Hawaii: this is the real thing, with explicit
+# ohana/accessorydwellingunitadu Y/N flags on every permit -- lets the ADU
+# scenario's absorption rate be calibrated against Honolulu's own real ADU
+# permit history instead of the generic all-housing BPS county benchmark.
+# No equivalent exists for Kauai (confirmed by search -- no bulk/API permit
+# export, same gap already documented for Kauai's sales data) -- see
+# honolulu_real_adu_absorption_rate() in build_model.py for the asymmetry
+# this creates and why it's disclosed rather than smoothed over.
+HONOLULU_PERMITS_SOCRATA_URL = "https://data.honolulu.gov/resource/4vab-c87q.json"
+
 # Google/Microsoft Open Buildings (VIDA/Source Cooperative), combined, public,
 # GeoParquet, partitioned by country. There is no Hawaii-only or state-level
 # file -- the USA partition covers the whole country -- so this is queried
@@ -743,6 +756,46 @@ def fetch_zillow_county_timeseries(county_name: str, out_path: Path) -> int:
     return len(rows_out)
 
 
+def fetch_honolulu_adu_permits(out_path: Path) -> int:
+    """
+    Every Honolulu ADU/Ohana building permit record, Jan 2005-present, from
+    data.honolulu.gov's live Socrata API (see HONOLULU_PERMITS_SOCRATA_URL
+    above). Filters server-side on ohana='Y' OR accessorydwellingunitadu='Y'
+    so this pulls only the ~tens of thousands of ADU-relevant permits, not
+    the full 432k-record table. Paginates in 50,000-row pages (Socrata's
+    default unauthenticated cap) via $limit/$offset.
+    """
+    select_cols = [
+        "tmk", "buildingpermitno", "buildingpermittype", "ohana",
+        "accessorydwellingunitadu", "issuedate", "statusdescription",
+        "estimatedvalueofwork", "totalfloorarea",
+    ]
+    where = "ohana='Y' OR accessorydwellingunitadu='Y'"
+    page_size = 50_000
+    offset = 0
+    records = []
+    while True:
+        params = {
+            "$select": ",".join(select_cols),
+            "$where": where,
+            "$limit": str(page_size),
+            "$offset": str(offset),
+            "$order": ":id",
+        }
+        url = f"{HONOLULU_PERMITS_SOCRATA_URL}?{urllib.parse.urlencode(params)}"
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            page = json.loads(resp.read().decode("utf-8"))
+        records.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+        time.sleep(0.2)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(records))
+    return len(records)
+
+
 def fetch_hawaii_census_places(out_path: Path) -> int:
     """
     Census-Designated-Place (CDP) boundaries for Hawaii -- what most people
@@ -900,7 +953,8 @@ def main() -> None:
             "building_footprints", "census_tracts", "census_places", "acs_commute_density",
             "acs_income_distribution", "acs_rent_distribution", "acs_renter_income_distribution",
             "zillow_county_timeseries",
-            "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops", "all",
+            "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops",
+            "honolulu_adu_permits", "all",
         ],
         default="all",
         help="Which named layer to fetch (default: all)",
@@ -960,6 +1014,13 @@ def main() -> None:
         print("Fetching honolulu_major_transit_stops (TheBus + Skyline GTFS, MobilityDatabase)...")
         count = fetch_honolulu_major_transit_stops(out_path)
         print(f"  {count} stops -> {out_path}")
+        return
+
+    if args.layer == "honolulu_adu_permits":
+        out_path = RAW_DIR / "honolulu_adu_permits.json"
+        print("Fetching honolulu_adu_permits (data.honolulu.gov Socrata, ohana/ADU permits)...")
+        count = fetch_honolulu_adu_permits(out_path)
+        print(f"  {count} records -> {out_path}")
         return
 
     if args.layer in ("building_footprints", "all"):
