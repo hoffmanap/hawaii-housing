@@ -147,6 +147,147 @@ COUNTY_CONFIG = {
         # generic "not yet implemented" warning in run_adu_scenario().
         "adu_parking_added_stalls": 1,
     },
+    "hawaii": {
+        "parcels_file": "parcels_hawaii_county.json",
+        "zoning_file": "zoning_hawaii_county.json",
+        "parcel_id_field": "tmk_txt",
+        # NOTE: the parcel layer's own "zone" field is a TMK administrative
+        # zone number (e.g. "8"), NOT a land-use zoning code -- confirmed
+        # 2026-10-24 by inspecting both raw layers directly. The real
+        # zoning code lives on the separate zoning_hawaii_county.json
+        # layer's own "zone" field (e.g. "RS-10", "A-20a"); the join below
+        # (_centroid_join against the zoning layer) is what actually
+        # supplies it, so this key points at the zoning layer's "zone",
+        # not the parcel layer's same-named field.
+        "zoning_field": "zone",
+        "taxclass_field": "pittcode",
+        "lot_area_field": "gisacres",
+        # UNCONFIRMED WORKING HYPOTHESIS, flagged here exactly like the
+        # existing ovrclass 11/14 situation documented in
+        # data/DATA_SOURCES.md: pittcode appears to be the county's
+        # documented 1-9 tax-class scheme x100 (100=Improved Residential,
+        # 200=Apartment, 300=Commercial, 400=Industrial, 500=Agricultural,
+        # 600=Conservation, 700=Hotel/Resort, 900=Homeowner), based on
+        # value-count distributions inspected 2026-10-24 (100: 64,341;
+        # 500: 64,303; 300: 1,875; 600: 1,644; 0: 1,303; 400: 1,113; 200:
+        # 646; 999: 383; 700: 110 records). This has NOT been confirmed
+        # against an authoritative county source -- treat with the same
+        # caution as any other unconfirmed decode in this project. 999
+        # and 0 look like sentinel/unclassified codes and are excluded.
+        "existing_residential_taxclasses": {100, 200, 900},
+        # Hawaii County's pittcode scheme makes no owner-occupied /
+        # non-owner-occupied distinction (same situation as Honolulu) --
+        # the raw "homeowner" Y/N field exists but has not been confirmed
+        # to mean owner-OCCUPIED (vs. a homeowner tax exemption, which is
+        # a different legal concept with a different eligibility test) --
+        # left unwired rather than guessed.
+        "owner_occupied_taxclasses": None,
+        # CONFIRMED 2026-10-24 via Hawaii Public Radio and West Hawaii
+        # Today coverage of County Council Bill 123 (signed by Mayor Roth,
+        # Oct 2024): ADUs (replacing the prior "ohana dwelling unit" rule)
+        # are permitted on Residential (RS), Duplex (RD),
+        # Residential-Agricultural (RA), Agricultural (A), and Family
+        # Agricultural (FA) zoned parcels -- up to 3 ADUs/property, each
+        # capped at 1,250 sqft, attached or detached. News coverage did
+        # not report a bill/ordinance number distinct from "Bill 123", nor
+        # any lot-size minimum, so none is applied here (adu_min_lot_sqft
+        # = 0, "don't gate", not "assumed small" -- same convention as
+        # Honolulu). The set below is every real zoning code actually
+        # present in zoning_hawaii_county.json that starts with one of
+        # these five prefixes (RS-7.5/10/15/20/22, RA-.5a/1a/2a, RD-3.75,
+        # A-1a/2a/3a/5a/10a/20a/40a, FA-1a/2a/3a) -- NOT the full set of
+        # codes that could theoretically exist under those prefixes
+        # statewide, since Commercial (CV/CN/CG), Industrial (ML/MG),
+        # Multi-family (RM), Village (V), and special districts (PD, CDH,
+        # NP, FR, OPEN) are excluded per the bill's own district list.
+        "adu_eligible_districts": {
+            "RS-7.5", "RS-10", "RS-15", "RS-20", "RS-22",
+            "RA-.5a", "RA-1a", "RA-2a",
+            "RD-3.75",
+            "A-1a", "A-2a", "A-3a", "A-5a", "A-10a", "A-20a", "A-40a",
+            "FA-1a", "FA-2a", "FA-3a",
+        },
+        "adu_min_lot_sqft": 0,
+        # CONFIRMED 2026-10-24: 1,250 sqft cap per ADU, flat (not banded by
+        # lot size like Honolulu's) -- not yet wired into any
+        # feasibility/pro-forma gate, same caveat as Honolulu's floor-area
+        # cap above.
+        "adu_floor_area_cap_sqft": {(0, float("inf")): 1_250},
+        # Hawaii County's RS/RA/A/FA zone labels end in an acreage/sqft
+        # suffix (RS-7.5, A-20a) that is a MINIMUM LOT SIZE for that
+        # district, not a units-per-acre density figure the way Kauai's
+        # R-numbers are -- the existing max_density_units_per_acre()
+        # regex parser is for Kauai's scheme specifically and would
+        # misread these, so it stays disabled here.
+        "use_rdistrict_density_rule": False,
+    },
+    "maui": {
+        "parcels_file": "parcels_maui.json",
+        "zoning_file": "zoning_maui.json",
+        "parcel_id_field": "tmk_txt",
+        "zoning_field": "zone_dist",
+        "taxclass_field": "pittcode",
+        "lot_area_field": "gisacres",
+        # Same unconfirmed pittcode x100 hypothesis as Hawaii County above
+        # (same raw field, same apparent scheme) -- value-count
+        # distribution inspected 2026-10-24: 900 (23,727), 100 (12,896),
+        # 500 (7,156), 1200 (2,646), 600 (1,281), 300 (1,045), 400 (923),
+        # 1100 (467), 999 (465), 700 (209), 200 (209), 1000 (136), 0 (79),
+        # 666 (6). Codes above 900 (1000/1100/1200) are not part of the
+        # documented 1-9 base scheme and are NOT included below -- treated
+        # as unknown/unclassified rather than guessed at, consistent with
+        # this project's standard for undocumented codes.
+        "existing_residential_taxclasses": {100, 200, 900},
+        "owner_occupied_taxclasses": None,
+        # CONFIRMED 2026-10-24 via direct WebFetch of Maui County
+        # Ordinance 4936 (mauicounty.gov/DocumentCenter/View/115314/Ord-4936),
+        # effective July 8, 2026: amends MCC 19.35.010(C) so ADUs are
+        # permitted in "any zoning district that allows accessory
+        # dwellings" -- cross-referenced to the Residential districts
+        # (MCC 19.08.020) and the County's Rural districts (MCC
+        # 19.29.030: RU-0.5, RU-1, RU-2, RU-5, RU-10), explicitly
+        # excluding Agricultural, Commercial, and Industrial districts
+        # (corroborated by Hawaii News Now's summary coverage). The set
+        # below is every real zone_dist value actually present in
+        # zoning_maui.json that is unambiguously one of these Residential
+        # or Rural districts (R-0/1/2/3 Residential; RU-0.5/1 Rural --
+        # RU-2/5/10 exist in the county code per the ordinance but no
+        # parcel in this dataset currently carries one of those labels).
+        # Ambiguous labels NOT included, on purpose, for lack of a
+        # confirming source: "R Rural" (42 parcels -- doesn't match the
+        # "RU-#" pattern the ordinance actually names), "D-1"/"D-2 Duplex"
+        # (9 parcels combined -- a duplex district, not explicitly named
+        # as "Residential" in the ordinance text fetched), and "PD Project
+        # District" (102 parcels -- a planned-district overlay, not a
+        # base residential/rural zone).
+        "adu_eligible_districts": {
+            "R-0 Residential", "R-1 Residential", "R-2 Residential", "R-3 Residential",
+            "RU-0.5 Rural - 1/2 Acre", "RU-1 Rural 1 Acre",
+        },
+        # CONFIRMED 2026-10-24, Ord. 4936: no minimum lot size gates ADU
+        # ELIGIBILITY itself -- a 7,500 sqft threshold instead controls
+        # how MANY ADUs a lot may have (2 ADUs on lots >= 7,500 sqft, 1 on
+        # smaller lots; Molokai/Lanai allow 1 on lots >= 7,500 sqft). This
+        # model only computes binary eligibility, not ADU count per
+        # parcel, so that per-lot-size "how many" nuance is NOT applied --
+        # a known, documented simplification that makes this a
+        # conservative (slightly under-counting, not over-counting) proxy
+        # for large-lot capacity specifically.
+        "adu_min_lot_sqft": 0,
+        # CONFIRMED 2026-10-24, Ord. 4936 Section 19.35.020: max floor
+        # area by lot size -- <=7,499 sqft: 500; 7,500-9,999: 600;
+        # 10,000-21,779: 720; 21,780-43,559: 840; 43,560-87,119: 960;
+        # >=87,120: 1,200 sqft. Not yet wired into any feasibility gate,
+        # same caveat as the other two counties' floor-area caps.
+        "adu_floor_area_cap_sqft": {
+            (0, 7_499): 500, (7_500, 9_999): 600, (10_000, 21_779): 720,
+            (21_780, 43_559): 840, (43_560, 87_119): 960, (87_120, float("inf")): 1_200,
+        },
+        # Maui's R-number (R-1, R-2, R-3) has not been confirmed to mean
+        # units-per-acre the way Kauai's does -- same conservative
+        # treatment as Honolulu: disabled rather than assumed.
+        "use_rdistrict_density_rule": False,
+    },
 }
 
 # Confirmed via Kauai County Code §8-4.2(b), §8-4.6 (eCode360, 2026-10-14):
@@ -406,6 +547,22 @@ def build_county(county: str) -> dict[str, Path]:
     zoning_hit = _centroid_join(centroids[[pid, "geometry"]], zoning, [cfg["zoning_field"]])
     slud_hit = _centroid_join(centroids[[pid, "geometry"]], slud, ["ludcode"])
     tract_hit = _centroid_join(centroids[[pid, "geometry"]], tracts, ["GEOID"])
+
+    # Hawaii County's raw parcel layer happens to carry its own field also
+    # named "zone" (a TMK administrative zone number, e.g. "8" -- NOT a
+    # land-use zoning code; confirmed 2026-10-24 by inspecting the raw
+    # layer directly). Left un-dropped, this collides on name with the
+    # zoning layer's own cfg["zoning_field"] ("zone") in the merge below:
+    # pandas' suffixes=("", "_zone") keeps the LEFT (parcel layer's own,
+    # wrong) column under the bare name and renames the right (correct,
+    # zoning-layer) one to "zone_zone" instead -- silently feeding the
+    # wrong field into every zoning-dependent computation downstream. Drop
+    # any parcel-layer column that shares cfg["zoning_field"]'s name
+    # (other than the join key itself) before merging, so the zoning
+    # layer's value always wins -- a no-op for every other county, where
+    # no such collision exists.
+    if cfg["zoning_field"] in parcels.columns and cfg["zoning_field"] != pid:
+        parcels = parcels.drop(columns=[cfg["zoning_field"]])
 
     parcels = (
         parcels.merge(zoning_hit[[pid, cfg["zoning_field"]]], on=pid, how="left", suffixes=("", "_zone"))
