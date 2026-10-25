@@ -39,7 +39,13 @@ RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 OUT_PATH = Path(__file__).parent.parent / "data" / "sample" / "dashboard.geojson"
 
-COUNTY_LABELS = {"kauai": "Kaua'i", "honolulu": "Honolulu"}
+COUNTY_LABELS = {"kauai": "Kaua'i", "honolulu": "Honolulu", "hawaii": "Hawai'i County", "maui": "Maui County"}
+
+# TIGERweb county FIPS prefixes for census_tracts.json's GEOID -- used to
+# scope the generic census_tracts.json layer (statewide) down to each
+# county's own tracts, same as the hardcoded "15007"/"15003" literals
+# already used in build_kauai_features()/build_honolulu_features().
+COUNTY_TRACT_FIPS_PREFIX = {"kauai": "15007", "honolulu": "15003", "hawaii": "15001", "maui": "15009"}
 
 
 def _zillow_timeseries_for_metadata(county: str) -> dict:
@@ -707,11 +713,130 @@ def build_honolulu_features() -> tuple[list, dict]:
     return features, metadata
 
 
+def build_light_county_features(county: str) -> tuple[list, dict]:
+    """Hawai'i County and Maui, added to the model pipeline 2026-10-24 (see
+    docs/MODEL_AND_ASSUMPTIONS.md and docs/DATA_PROVENANCE.md) but without
+    the TOD transit layer, parking-reform study, sales-comps/ACS-scaled
+    feasibility pro forma, or ACS income/commute/rent data that Kaua'i and
+    Honolulu have -- none of those exist for these two counties yet. This
+    function therefore surfaces only what's real and built: Baseline
+    (zoned capacity), Missing Middle, and ADU/Ohana, UNGATED (no
+    feasibility or affordability adjustment -- there is no pro forma to
+    gate them against). It deliberately does NOT add TOD/parking fields,
+    an existing_tod_overlay_* field, a *_feasible/*_pct_affording/
+    *_winning_tenure field, or an ACS-based metadata block -- adding
+    those as null/0 would silently imply they were considered and found
+    to be zero, which is false; leaving them out is the honest
+    representation of "not modeled yet."
+
+    Returned features intentionally do NOT get added to the dashboard's
+    default Scenario Explorer county set (index.html's
+    state.scenarioCounties) -- that view's TOD/parking/feasibility
+    rendering assumes fields these two counties don't have. They DO
+    appear in the Existing Conditions tab, which already renders any
+    by_county entry generically (see renderConditionsTab()'s
+    activeCounties/scatterDatasets, keyed off whatever's actually present
+    in metadata.by_county -- no county-specific JS change was needed for
+    that tab to pick these two up).
+    """
+    bm.build_county(county)
+    default_absorption_rate = bm.absorption_rate_benchmark_for(county)
+
+    adu_tract, _ = bm.run_adu_scenario(county)
+    mm_tract, _ = bm.run_missing_middle_scenario(county)
+    mm_baseline_tract = bm.run_missing_middle_baseline_tract(county)
+    zoned_capacity_tract = bm.existing_zoned_capacity_tract(county)
+
+    adu_tract = adu_tract.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
+    mm_tract = mm_tract.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
+    mm_baseline_tract = mm_baseline_tract.copy(); mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
+    zoned_capacity_tract = zoned_capacity_tract.copy(); zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
+
+    adu_by_geoid = {r["GEOID"]: r for r in adu_tract.to_dict("records")}
+    mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
+    mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
+    zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
+
+    fips_prefix = COUNTY_TRACT_FIPS_PREFIX[county]
+    tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
+    tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts if f["properties"]["GEOID"].startswith(fips_prefix)}
+
+    try:
+        from shapely.geometry import mapping, shape
+    except ImportError:
+        shape = mapping = None
+
+    features = []
+    for geoid, feat in tract_by_geoid.items():
+        zoned_r = zoned_by_geoid.get(geoid)
+        if zoned_r is None:
+            # No parcel in this tract matched the county's own layers --
+            # same "skip, don't zero-fill" convention build_kauai_features()
+            # uses, so an unmatched tract is absent from the data rather
+            # than shown as a real, modeled zero.
+            continue
+        adu_r = adu_by_geoid.get(geoid, {})
+        mm_r = mm_by_geoid.get(geoid, {})
+        mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
+        props = {
+            "GEOID": geoid,
+            "county": county,
+            "name": feat["properties"].get("NAME"),
+            "existing_total_parcel_count": zoned_r.get("total_parcel_count"),
+            "existing_residential_parcel_count": zoned_r.get("residential_parcel_count"),
+            "existing_units_built": zoned_r.get("existing_units_built"),
+            "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
+            "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
+            "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
+            "existing_mm_headroom": zoned_r.get("mm_headroom"),
+            "existing_adu_headroom": zoned_r.get("adu_headroom"),
+            "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
+            "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
+            "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
+            "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
+            "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
+            "area_land_sqmi": (feat["properties"].get("AREALAND") or 0) / 2_589_988.11,
+        }
+        geometry = feat["geometry"]
+        if shape is not None:
+            geometry = mapping(shape(geometry).simplify(0.0002, preserve_topology=True))
+        features.append({"type": "Feature", "geometry": geometry, "properties": props})
+
+    metadata = {
+        "default_absorption_rate": default_absorption_rate,
+        "absorption_rate_benchmark_detail": bm.absorption_rate_benchmark_detail(county),
+        "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
+        "existing_conditions_summary": {
+            "total_parcel_count": int(zoned_capacity_tract["total_parcel_count"].sum()),
+            "residential_parcel_count": int(zoned_capacity_tract["residential_parcel_count"].sum()),
+            "existing_units_built": int(zoned_capacity_tract["existing_units_built"].sum()),
+            "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
+            "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
+            "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+            "mm_headroom": int(zoned_capacity_tract["mm_headroom"].sum()),
+            "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
+        },
+        "data_status_note": (
+            "Added to the model pipeline 2026-10-24: Baseline (zoned capacity), Missing Middle, "
+            "and ADU/Ohana are real, computed from this county's own live parcel/zoning data and a "
+            "real, cited ADU ordinance -- but UNGATED, since no feasibility pro forma or affordability "
+            "data exists yet for this county (unlike Kaua'i/Honolulu's sales-comps/ACS-scaled gates). "
+            "This county's ADU absorption rate is also the generic countywide benchmark, not a real "
+            "permit-calibrated rate like Honolulu's -- see docs/MODEL_AND_ASSUMPTIONS.md's Limitations. "
+            "No TOD transit layer, parking-reform study, or ACS income/commute/rent/sales data exists "
+            "for this county, so this entry appears in Existing Conditions only, not the Scenario Explorer."
+        ),
+    }
+    return features, metadata
+
+
 def main() -> None:
     kauai_features, kauai_meta = build_kauai_features()
     honolulu_features, honolulu_meta = build_honolulu_features()
+    hawaii_features, hawaii_meta = build_light_county_features("hawaii")
+    maui_features, maui_meta = build_light_county_features("maui")
 
-    all_features = kauai_features + honolulu_features
+    all_features = kauai_features + honolulu_features + hawaii_features + maui_features
     metadata = dict(kauai_meta)  # Scenario Explorer's existing top-level keys, unchanged, Kauai-scoped
     metadata["by_county"] = {
         "kauai": {
@@ -736,13 +861,20 @@ def main() -> None:
             **honolulu_meta,
             "scenarios_available": ["adu", "mm", "tod", "parking"],
         },
+        # Hawai'i County and Maui: Existing Conditions only (Baseline/MM/ADU,
+        # ungated) -- not added to the Scenario Explorer's default county set
+        # (index.html's state.scenarioCounties), since that view's TOD/
+        # parking/feasibility rendering assumes data these two counties
+        # don't have yet. See build_light_county_features()'s docstring.
+        "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm"]},
+        "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm"]},
     }
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps({"type": "FeatureCollection", "features": all_features, "metadata": metadata}))
     print(
-        f"{len(all_features)} tracts ({len(kauai_features)} Kauai + {len(honolulu_features)} Honolulu) "
-        f"-> {OUT_PATH}"
+        f"{len(all_features)} tracts ({len(kauai_features)} Kauai + {len(honolulu_features)} Honolulu + "
+        f"{len(hawaii_features)} Hawai'i County + {len(maui_features)} Maui) -> {OUT_PATH}"
     )
 
 
