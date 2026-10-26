@@ -630,6 +630,92 @@ def hawaii_county_historical_ohana_permit_summary() -> dict:
     }
 
 
+def maui_real_adu_absorption_rate() -> dict:
+    """
+    A REAL, scenario-specific absorption rate for Maui's ADU scenario,
+    calibrated against actual issued building permits -- the same
+    methodology as honolulu_real_adu_absorption_rate() (avg_annual_real_
+    ADU_permits / CURRENT_ADU-eligible_parcel_count, scaled to the
+    10-year decade-equivalent convention), applied to a different source:
+    Maui County's monthly "Building Permits Issued" DSA reports, parsed
+    by scripts/process_maui_permit_reports.py into
+    data/processed/maui_permits_parsed.csv (see that script's and
+    docs/DATA_PROVENANCE.md's docstrings for the source, the parser's
+    cross-checks against each report's own printed totals, and known
+    caveats).
+
+    THIS DIFFERS FROM HONOLULU'S CALIBRATION IN TWO IMPORTANT WAYS, both
+    making this a weaker, more conservative estimate than Honolulu's:
+
+    1. Partial year, not complete years. As of 2026-10-26 only January-
+       September 2026 (COMPLETE_MONTHS below) have been supplied -- 9 of
+       12 months, all from the same single calendar year. Honolulu's
+       calibration averages several COMPLETE years; this instead takes
+       the 9-month average permits/month and multiplies by 12 to
+       annualize. That's a reasonable estimate given no seasonal pattern
+       is yet established one way or the other, but it is extrapolation
+       from 9 months, not an observed annual rate, and it reflects only
+       2026 (no multi-year averaging to smooth out one unusual year --
+       and 2026 includes an active post-Lahaina-fire ADU rebuild wave,
+       which may itself not be representative of a "normal" year; see
+       is_adu_count's note below).
+    2. Free-text identification, not a permit-type field. Maui's report
+       has no dedicated ADU/Ohana permit-type column (unlike Honolulu's
+       ohana/accessorydwellingunitadu fields or Hawai'i County's
+       dedicated Ohana Permits layer) -- a permit counts as ADU-related
+       here only if its free-text Name/Description contains "ACCESSORY
+       DWELLING", "ADU", or "OHANA" (is_likely_adu in
+       process_maui_permit_reports.py). This is a conservative lower
+       bound: a real ADU permit described in other words (e.g. "2nd
+       farm dwelling," "main dwelling w/ att garage" where the "main"
+       unit is actually the second unit on the parcel) would be missed.
+       So this function's rate likely UNDERSTATES true ADU permitting
+       activity, in contrast to Honolulu's rate, which comes from an
+       authoritative permit-type field.
+    """
+    permits_path = OUT_DIR / "maui_permits_parsed.csv"
+    if not permits_path.exists():
+        raise FileNotFoundError(
+            f"{permits_path} not found -- run `process_maui_permit_reports.py` first "
+            "(needs report files in data/raw/permit_reports/maui/)."
+        )
+    permits = pd.read_csv(permits_path)
+    adu_permits = permits[permits["is_likely_adu"].astype(bool)]
+
+    complete_months = sorted(permits["month"].unique())
+    avg_monthly_real_adu_permits = len(adu_permits) / len(complete_months)
+    avg_annual_real_adu_permits = avg_monthly_real_adu_permits * 12.0
+
+    adu_tract, _ = run_adu_scenario("maui", ScenarioParams(absorption_rate=0))
+    eligible_parcel_count = int(adu_tract["eligible_parcel_count"].sum())
+
+    decade_equivalent_pct = 100.0 * 10.0 * avg_annual_real_adu_permits / eligible_parcel_count
+
+    return {
+        "months_of_data": complete_months,
+        "total_adu_permits_observed": int(len(adu_permits)),
+        "avg_monthly_real_adu_permits": round(avg_monthly_real_adu_permits, 2),
+        "avg_annual_real_adu_permits_extrapolated": round(avg_annual_real_adu_permits, 1),
+        "eligible_parcel_count": eligible_parcel_count,
+        "decade_equivalent_pct": round(decade_equivalent_pct, 2),
+        "absorption_rate": decade_equivalent_pct / 100.0,
+        "generic_benchmark_pct_for_comparison": round(absorption_rate_benchmark_for("maui") * 100.0, 1),
+        "caveats": (
+            "Extrapolated from 9 months of a single calendar year (2026), not multiple "
+            "complete years like Honolulu's equivalent calibration; and is_likely_adu is a "
+            "free-text keyword match on the permit description, not an authoritative "
+            "permit-type field, so the true rate is likely higher than this. 2026 includes "
+            "active post-Lahaina-fire ADU rebuild permitting, which may not represent a "
+            "'normal' year going forward."
+        ),
+        "source": (
+            "Maui County DSA 'Building Permits Issued' monthly reports "
+            "(mauicounty.gov/DocumentCenter/Index/7188), user-supplied, parsed by "
+            "process_maui_permit_reports.py"
+        ),
+    }
+
+
 def _load_geojson(path: Path) -> gpd.GeoDataFrame:
     data = json.loads(path.read_text())
     records = []
@@ -878,6 +964,13 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
     elif county == "honolulu" and (RAW_DIR / "honolulu_adu_permits.json").exists():
         absorption_rate = honolulu_real_adu_absorption_rate()["absorption_rate"]
         absorption_rate_source = "honolulu_real_adu_permits"
+    elif county == "maui" and (OUT_DIR / "maui_permits_parsed.csv").exists():
+        # Weaker basis than Honolulu's (9 months of one year, free-text ADU
+        # identification -- see maui_real_adu_absorption_rate()'s docstring)
+        # but real, and a meaningfully better-grounded number than the
+        # generic all-housing county benchmark for this one scenario.
+        absorption_rate = maui_real_adu_absorption_rate()["absorption_rate"]
+        absorption_rate_source = "maui_real_adu_permits"
     else:
         absorption_rate = absorption_rate_benchmark_for(county)
 
