@@ -761,6 +761,44 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
     tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
     tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts if f["properties"]["GEOID"].startswith(fips_prefix)}
 
+    # Real sales comps, where available (Maui, added 2026-10-26 --
+    # scripts/process_maui_sales_exports.py; user-supplied exports, same
+    # "no self-service bulk export" situation as Kaua'i's). This is
+    # DELIBERATELY sales data only, not a feasibility gate -- there is no
+    # sourced construction-cost pro forma for this county yet, so these
+    # numbers describe the market (what things sell for), not whether a
+    # reform pencils (see this function's own docstring). Hawai'i County
+    # has no equivalent file yet, so sales_by_geoid stays empty for it.
+    sales_path = PROCESSED_DIR / f"{county}_sales_joined.csv"
+    sales_by_geoid = {}
+    countywide_sales_count = 0
+    countywide_median_price_per_sqft = None
+    sales_monthly_trend = []
+    if sales_path.exists():
+        sales_df = pd.read_csv(sales_path, dtype={"GEOID": str})
+        valid_col = sales_df["valid_sale"] if "valid_sale" in sales_df.columns else True
+        usable = sales_df[
+            (sales_df["building_sqft"] > 0)
+            & sales_df["price_per_sqft"].notna()
+            & sales_df["GEOID"].notna()
+            & valid_col
+        ].copy()
+        countywide_sales_count = int(len(usable))
+        countywide_median_price_per_sqft = (
+            round(usable["price_per_sqft"].median(), 2) if countywide_sales_count else None
+        )
+        by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
+        sales_by_geoid = {
+            geoid: {"median_price_per_sqft": round(row["median"], 2), "sales_count": int(row["count"])}
+            for geoid, row in by_tract.iterrows()
+        }
+        usable["month"] = pd.to_datetime(usable["sale_date"]).dt.to_period("M").astype(str)
+        by_month = usable.groupby("month")["price_per_sqft"].agg(["median", "count"]).reset_index()
+        sales_monthly_trend = [
+            {"month": r["month"], "median_price_per_sqft": round(r["median"], 2), "sales_count": int(r["count"])}
+            for _, r in by_month.iterrows()
+        ]
+
     try:
         from shapely.geometry import mapping, shape
     except ImportError:
@@ -778,6 +816,7 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
         adu_r = adu_by_geoid.get(geoid, {})
         mm_r = mm_by_geoid.get(geoid, {})
         mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
+        sales_r = sales_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": county,
@@ -796,6 +835,8 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
             "area_land_sqmi": (feat["properties"].get("AREALAND") or 0) / 2_589_988.11,
+            "sales_median_price_per_sqft": sales_r.get("median_price_per_sqft"),
+            "sales_count_2026": sales_r.get("sales_count"),
         }
         geometry = feat["geometry"]
         if shape is not None:
@@ -823,9 +864,17 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
             "data exists yet for this county (unlike Kaua'i/Honolulu's sales-comps/ACS-scaled gates). "
             "This county's ADU absorption rate is also the generic countywide benchmark, not a real "
             "permit-calibrated rate like Honolulu's -- see docs/MODEL_AND_ASSUMPTIONS.md's Limitations. "
-            "No TOD transit layer, parking-reform study, or ACS income/commute/rent/sales data exists "
-            "for this county, so this entry appears in Existing Conditions only, not the Scenario Explorer."
+            "No TOD transit layer, parking-reform study, or ACS income/commute/rent data exists "
+            "for this county" + (
+                ", and no sales data either" if not sales_path.exists() else
+                " -- real sales comps ARE now wired in (added 2026-10-26), but as market data only, "
+                "not a feasibility gate: there is still no sourced construction-cost pro forma for "
+                "this county to compare them against"
+            ) + ", so this entry appears in Existing Conditions only, not the Scenario Explorer."
         ),
+        "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
+        "countywide_sales_count_2026": countywide_sales_count,
+        "sales_monthly_trend": sales_monthly_trend,
     }
     return features, metadata
 
