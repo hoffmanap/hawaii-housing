@@ -74,6 +74,19 @@ RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 # this creates and why it's disclosed rather than smoothed over.
 HONOLULU_PERMITS_SOCRATA_URL = "https://data.honolulu.gov/resource/4vab-c87q.json"
 
+# Hawai'i County's "Ohana Permits" layer, confirmed public 2026-10-26 (the
+# ArcGIS Hub page the user supplied is JS-rendered, but its underlying item
+# info -- arcgis.com/sharing/rest/content/items/507149e846904456bd114bb136688c07
+# -- resolves to this FeatureServer, access: "public"; layer id 16 per the
+# service's own /FeatureServer?f=json layer listing). Real TMK-keyed Ohana
+# Dwelling permit-application history, 4,057 records -- see
+# hawaii_county_historical_ohana_permit_summary() in build_model.py for why
+# this is disclosed but NOT used to calibrate the ADU scenario's absorption
+# rate (it tracks a now-repealed permit process, not the current ordinance).
+HAWAII_COUNTY_OHANA_PERMITS_URL = (
+    "https://services1.arcgis.com/C2LPusZs5OXNGFDn/arcgis/rest/services/ohanapermit/FeatureServer/16/query"
+)
+
 # Google/Microsoft Open Buildings (VIDA/Source Cooperative), combined, public,
 # GeoParquet, partitioned by country. There is no Hawaii-only or state-level
 # file -- the USA partition covers the whole country -- so this is queried
@@ -796,6 +809,43 @@ def fetch_honolulu_adu_permits(out_path: Path) -> int:
     return len(records)
 
 
+def fetch_hawaii_county_ohana_permits(out_path: Path) -> int:
+    """
+    Every Hawai'i County Ohana Dwelling permit-application record, a real,
+    TMK-keyed, individually-dated permit history (see
+    HAWAII_COUNTY_OHANA_PERMITS_URL above and
+    hawaii_county_historical_ohana_permit_summary() in build_model.py).
+    Paginates in 1,000-row pages (this FeatureServer's own maxRecordCount)
+    via resultOffset/resultRecordCount -- no auth token needed, confirmed
+    public 2026-10-26.
+    """
+    page_size = 1_000
+    offset = 0
+    records = []
+    while True:
+        params = {
+            "where": "1=1",
+            "outFields": "*",
+            "returnGeometry": "false",
+            "resultOffset": str(offset),
+            "resultRecordCount": str(page_size),
+            "f": "json",
+        }
+        url = f"{HAWAII_COUNTY_OHANA_PERMITS_URL}?{urllib.parse.urlencode(params)}"
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            page = json.loads(resp.read().decode("utf-8"))
+        feats = page.get("features", [])
+        records.extend(f["attributes"] for f in feats)
+        if len(feats) < page_size:
+            break
+        offset += page_size
+        time.sleep(0.2)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(records))
+    return len(records)
+
+
 def fetch_hawaii_census_places(out_path: Path) -> int:
     """
     Census-Designated-Place (CDP) boundaries for Hawaii -- what most people
@@ -954,7 +1004,7 @@ def main() -> None:
             "acs_income_distribution", "acs_rent_distribution", "acs_renter_income_distribution",
             "zillow_county_timeseries",
             "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops",
-            "honolulu_adu_permits", "all",
+            "honolulu_adu_permits", "hawaii_county_ohana_permits", "all",
         ],
         default="all",
         help="Which named layer to fetch (default: all)",
@@ -1020,6 +1070,13 @@ def main() -> None:
         out_path = RAW_DIR / "honolulu_adu_permits.json"
         print("Fetching honolulu_adu_permits (data.honolulu.gov Socrata, ohana/ADU permits)...")
         count = fetch_honolulu_adu_permits(out_path)
+        print(f"  {count} records -> {out_path}")
+        return
+
+    if args.layer == "hawaii_county_ohana_permits":
+        out_path = RAW_DIR / "hawaii_county_ohana_permits.json"
+        print("Fetching hawaii_county_ohana_permits (Hawai'i County GIS Ohana Permits FeatureServer)...")
+        count = fetch_hawaii_county_ohana_permits(out_path)
         print(f"  {count} records -> {out_path}")
         return
 

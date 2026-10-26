@@ -162,19 +162,27 @@ COUNTY_CONFIG = {
         "zoning_field": "zone",
         "taxclass_field": "pittcode",
         "lot_area_field": "gisacres",
-        # UNCONFIRMED WORKING HYPOTHESIS, flagged here exactly like the
-        # existing ovrclass 11/14 situation documented in
-        # data/DATA_SOURCES.md: pittcode appears to be the county's
-        # documented 1-9 tax-class scheme x100 (100=Improved Residential,
-        # 200=Apartment, 300=Commercial, 400=Industrial, 500=Agricultural,
-        # 600=Conservation, 700=Hotel/Resort, 900=Homeowner), based on
-        # value-count distributions inspected 2026-10-24 (100: 64,341;
-        # 500: 64,303; 300: 1,875; 600: 1,644; 0: 1,303; 400: 1,113; 200:
-        # 646; 999: 383; 700: 110 records). This has NOT been confirmed
-        # against an authoritative county source -- treat with the same
-        # caution as any other unconfirmed decode in this project. 999
-        # and 0 look like sentinel/unclassified codes and are excluded.
-        "existing_residential_taxclasses": {100, 200, 900},
+        # CONFIRMED 2026-10-26 against Hawai'i County's own authoritative
+        # source -- the item description on the county's official ArcGIS
+        # layer "County of Hawai'i Properties as of April 2025"
+        # (arcgis.com item 9072608159f64005bfdf6aa1fee24197, Real Property
+        # Tax Office / Planning Department): "PittCode (Long Integer)
+        # Possession, Interest, Time, and Title (PITT) Code used to
+        # identify the tax rate applied to the property. For Hawai'i
+        # County, PITT Codes are as follows: Residential (100), Apartment
+        # (200), Commercial (300), Industrial (400), Agricultural or
+        # Native Forests (500), Conservation (600), Hotel and Resort
+        # (700), Homeowner (900), Multiple codes for a single TMK (999),
+        # or Unknown (0). For tax rate purposes in Hawai'i County, a PITT
+        # Code of 0 is used for Affordable Rental Housing." This replaces
+        # the earlier "unconfirmed working hypothesis" flag (the /100
+        # decode is now a cited fact, not a guess) and corrects one part
+        # of it: 0 is NOT a sentinel/unclassified code as previously
+        # assumed -- it specifically means Affordable Rental Housing,
+        # itself a residential use, so it's now included below (999,
+        # "multiple codes for a single TMK," stays excluded -- genuinely
+        # ambiguous, not residential-specific).
+        "existing_residential_taxclasses": {0, 100, 200, 900},
         # Hawaii County's pittcode scheme makes no owner-occupied /
         # non-owner-occupied distinction (same situation as Honolulu) --
         # the raw "homeowner" Y/N field exists but has not been confirmed
@@ -182,24 +190,38 @@ COUNTY_CONFIG = {
         # a different legal concept with a different eligibility test) --
         # left unwired rather than guessed.
         "owner_occupied_taxclasses": None,
-        # CONFIRMED 2026-10-24 via Hawaii Public Radio and West Hawaii
-        # Today coverage of County Council Bill 123 (signed by Mayor Roth,
-        # Oct 2024): ADUs (replacing the prior "ohana dwelling unit" rule)
-        # are permitted on Residential (RS), Duplex (RD),
-        # Residential-Agricultural (RA), Agricultural (A), and Family
-        # Agricultural (FA) zoned parcels -- up to 3 ADUs/property, each
-        # capped at 1,250 sqft, attached or detached. News coverage did
-        # not report a bill/ordinance number distinct from "Bill 123", nor
-        # any lot-size minimum, so none is applied here (adu_min_lot_sqft
-        # = 0, "don't gate", not "assumed small" -- same convention as
-        # Honolulu). The set below is every real zoning code actually
-        # present in zoning_hawaii_county.json that starts with one of
-        # these five prefixes (RS-7.5/10/15/20/22, RA-.5a/1a/2a, RD-3.75,
-        # A-1a/2a/3a/5a/10a/20a/40a, FA-1a/2a/3a) -- NOT the full set of
-        # codes that could theoretically exist under those prefixes
-        # statewide, since Commercial (CV/CN/CG), Industrial (ML/MG),
-        # Multi-family (RM), Village (V), and special districts (PD, CDH,
-        # NP, FR, OPEN) are excluded per the bill's own district list.
+        # CONFIRMED 2026-10-26 against the PRIMARY ordinance text itself
+        # (Hawai'i County Clerk's WebLink record, Ordinance No. 24-70 /
+        # Bill 123 Draft 5, effective October 7, 2024 -- fetched directly
+        # via the clerk's own DocumentService API, not news coverage;
+        # amends Hawai'i County Code Chapter 25, Article 6, Division 3).
+        # This UPGRADES and CORRECTS the earlier news-sourced citation:
+        # Section 25-6-31(a) permits ADUs on Residential (RS), Duplex
+        # (RD), Residential-Agricultural (RA), Family Agricultural (FA),
+        # and Agricultural (A) districts -- confirming the district set
+        # already used here -- but Section 25-6-36 (the new "Density
+        # limit" section) actually caps it at ONE accessory dwelling unit
+        # per primary dwelling unit authorized by the applicable zoning
+        # regulations, NOT "up to 3 ADUs/property" as the news coverage
+        # this project originally relied on had claimed -- that figure
+        # does not appear anywhere in the actual ordinance text and is
+        # now known to be wrong. (This project's model only computes
+        # binary per-parcel eligibility, not a per-parcel ADU count, so
+        # this correction doesn't change any computed figure -- it only
+        # corrects a secondhand claim stated in commentary/docs.) No lot
+        # size minimum gates eligibility (Section 25-6-35's old 10,000
+        # sqft minimum building-site-area rule was explicitly repealed by
+        # this same ordinance), so adu_min_lot_sqft=0 means "don't gate,"
+        # not "assumed small," same convention as Honolulu. The set below
+        # is every real zoning code actually present in
+        # zoning_hawaii_county.json that starts with one of the five
+        # confirmed district prefixes (RS-7.5/10/15/20/22, RA-.5a/1a/2a,
+        # RD-3.75, A-1a/2a/3a/5a/10a/20a/40a, FA-1a/2a/3a) -- NOT the full
+        # set of codes that could theoretically exist under those
+        # prefixes statewide, since Commercial (CV/CN/CG), Industrial
+        # (ML/MG), Multi-family (RM), Village (V), and special districts
+        # (PD, CDH, NP, FR, OPEN) are outside the ordinance's own
+        # district list.
         "adu_eligible_districts": {
             "RS-7.5", "RS-10", "RS-15", "RS-20", "RS-22",
             "RA-.5a", "RA-1a", "RA-2a",
@@ -208,8 +230,12 @@ COUNTY_CONFIG = {
             "FA-1a", "FA-2a", "FA-3a",
         },
         "adu_min_lot_sqft": 0,
-        # CONFIRMED 2026-10-24: 1,250 sqft cap per ADU, flat (not banded by
-        # lot size like Honolulu's) -- not yet wired into any
+        # CONFIRMED 2026-10-26 against the primary ordinance text, Section
+        # 25-6-34: "An accessory dwelling unit shall not exceed one
+        # thousand two hundred and fifty square feet in living area,
+        # exclusive of any lanai, garage, or carport" -- flat (not banded
+        # by lot size like Honolulu's), and also capped at the zoning
+        # district's own height limit. Not yet wired into any
         # feasibility/pro-forma gate, same caveat as Honolulu's floor-area
         # cap above.
         "adu_floor_area_cap_sqft": {(0, float("inf")): 1_250},
@@ -496,6 +522,111 @@ def honolulu_real_adu_absorption_rate() -> dict:
         "absorption_rate": decade_equivalent_pct / 100.0,
         "generic_benchmark_pct_for_comparison": round(absorption_rate_benchmark_for("honolulu") * 100.0, 1),
         "source": "data.honolulu.gov Socrata building permits (4vab-c87q), ohana='Y' OR accessorydwellingunitadu='Y'",
+    }
+
+
+def hawaii_county_historical_ohana_permit_summary() -> dict:
+    """
+    Real, record-level historical Ohana Dwelling permit data for Hawai'i
+    County (data.hawaiicounty.gov/gis "Ohana Permits" FeatureServer,
+    layer 16, service id 507149e846904456bd114bb136688c07 -- confirmed
+    public, fetched directly 2026-10-26, 4,057 records, user-supplied
+    link). Unlike honolulu_real_adu_absorption_rate() above, this
+    function DELIBERATELY DOES NOT return an absorption_rate for
+    run_adu_scenario() to use -- the data is real, but using it to
+    calibrate a FUTURE rate would be wrong, for a specific, checkable
+    reason laid out below, not a data-quality excuse.
+
+    This dataset tracks permit applications under the OLD "Ohana
+    Dwelling" permit process (Hawai'i County Code former section
+    25-6-30 through 25-6-39.7, repealed by Ordinance 24-70 / Bill 123
+    Draft 5, effective October 7, 2024 -- see COUNTY_CONFIG["hawaii"]'s
+    adu_eligible_districts comment for the primary-source ordinance
+    citation). That old process was its own separate permit application
+    track with real administrative friction the new ordinance explicitly
+    removed: a $25 filing fee, a notice-to-neighbors requirement, only
+    one active Ohana permit application per applicant at a time, a
+    10,000 sqft minimum building-site area, and a cap of exactly one
+    Ohana dwelling per site (Section 25-6-33, now repealed).
+
+    The annual permit-application count collapsed from the hundreds per
+    year in the late 1980s/early 1990s (peak: 555 in 1989) to single
+    digits per year for every year from 1996 through 2023 (the dataset's
+    last complete year) -- e.g. 8, 7, 5, 7, 6, 4, 2 for 2017-2023. This
+    is NOT evidence that real demand for ADUs in Hawai'i County is
+    negligible; it's much more consistent with the OLD permit process
+    itself becoming a rarely-used administrative dead end (the same kind
+    of friction the new ordinance's own legislative history -- see the
+    primary ordinance text -- was written to fix: removing the lot-size
+    minimum, the one-active-application rule, and the separate
+    application track entirely). Computing a "recent-years average" rate
+    from this data the same way honolulu_real_adu_absorption_rate() does
+    from Honolulu's data would be calibrating against a process this
+    same county just abolished for being too restrictive -- not a
+    defensible stand-in for how the NEW ADU rules will perform, and
+    almost certainly a severe understatement if used that way.
+
+    Returned for disclosure/documentation purposes only (see
+    docs/DATA_PROVENANCE.md) -- run_adu_scenario("hawaii") continues to
+    use the generic county benchmark, same as before this data was
+    found.
+    """
+    permits_path = RAW_DIR / "hawaii_county_ohana_permits.json"
+    if not permits_path.exists():
+        raise FileNotFoundError(
+            f"{permits_path} not found -- fetch via the Ohana Permits FeatureServer "
+            "(services1.arcgis.com/C2LPusZs5OXNGFDn/arcgis/rest/services/ohanapermit/FeatureServer/16) first."
+        )
+    permits = pd.read_json(permits_path)
+    permits["permit_date"] = pd.to_datetime(permits["DATE_"], format="%m/%d/%Y", errors="coerce")
+    permits = permits[permits["permit_date"].notna()].copy()
+    permits["year"] = permits["permit_date"].dt.year
+    # One record (OHD_NO 86-0094) has a plainly erroneous source date of
+    # "09/23/0986" -- almost certainly a typo for 1986 given its own
+    # permit number prefix, but reported as-is in the raw data rather than
+    # silently corrected. Excluded here only from the date_range/min-year
+    # display below so a single data-entry error doesn't make the whole
+    # dataset look like it starts in the year 986; it's not in any of the
+    # 2014-2023 years used for the actual average, so it has zero effect
+    # on any computed figure.
+    display_years = permits[permits["year"] >= 1970]
+    approved = permits[permits["STATUS"].str.strip().str.lower() == "approved"]
+
+    pre_regime_change_years = range(2014, 2024)  # last 10 complete years before Ord. 24-70 (Oct 2024)
+    by_year = approved[approved["year"].isin(pre_regime_change_years)].groupby("year").size()
+    recent_avg_annual_approved = by_year.reindex(pre_regime_change_years, fill_value=0).mean()
+
+    peak_year_row = approved.groupby("year").size().idxmax(), int(approved.groupby("year").size().max())
+
+    return {
+        "total_records": len(permits),
+        "total_approved": int(len(approved)),
+        "date_range": f"{int(display_years['year'].min())}-{int(display_years['year'].max())}",
+        "peak_year": {"year": int(peak_year_row[0]), "approved_permits": peak_year_row[1]},
+        "recent_avg_annual_approved_2014_2023": round(float(recent_avg_annual_approved), 1),
+        "recent_avg_as_decade_equivalent_pct_for_reference_only": round(
+            100.0 * 10.0 * recent_avg_annual_approved
+            / int(run_adu_scenario("hawaii", ScenarioParams(absorption_rate=0))[0]["eligible_parcel_count"].sum()),
+            3,
+        ),
+        "used_for_scenario_calibration": False,
+        "why_not_used": (
+            "This dataset tracks the OLD Ohana Dwelling permit process (repealed by Ordinance "
+            "24-70 / Bill 123 Draft 5, effective 2024-10-07), which had real administrative "
+            "friction the new ADU ordinance removed (a separate application track, $25 fee, "
+            "one-active-application rule, 10,000 sqft minimum lot). Annual permit volume "
+            "collapsed from the hundreds/year in the late 1980s to single digits/year from 1996 "
+            "onward -- almost certainly reflecting that process becoming a rarely-used "
+            "administrative dead end, not real ADU demand. Using its recent-years rate to "
+            "calibrate the NEW ordinance's future absorption rate would be calibrating against "
+            "a process this county just abolished for being too restrictive. Hawai'i County's "
+            "ADU scenario continues to use the generic county benchmark instead."
+        ),
+        "source": (
+            "Hawai'i County GIS 'Ohana Permits' FeatureServer (services1.arcgis.com/"
+            "C2LPusZs5OXNGFDn/arcgis/rest/services/ohanapermit/FeatureServer/16), "
+            "confirmed public, fetched 2026-10-26"
+        ),
     }
 
 
