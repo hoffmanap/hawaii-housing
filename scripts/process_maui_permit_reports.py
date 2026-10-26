@@ -93,6 +93,7 @@ BOILERPLATE_PREFIXES = (
 )
 ADU_KEYWORDS = re.compile(r"ACCESSORY DWELLING|\bADU\b|OHANA", re.I)
 TMK_RE = re.compile(r"^\d{9,13}-\d+$")
+TMK_ANYWHERE_RE = re.compile(r"\d{9,13}-\d+$")
 
 
 def _lines_from_html(path: Path) -> list[str]:
@@ -224,14 +225,207 @@ def parse_report(path: Path) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+# Ground truth for this-month-only totals, read by hand from each report's
+# own year-to-date recap table ("Total # of Permits Total # of Units Total
+# Valuation" / "<Month> <permits> <units> <valuation>") -- NOT derived from
+# this parser, so they're a real cross-check, not a tautology. Extend this
+# as more months are supplied; a month absent here just skips the check.
+MONTHLY_GROUND_TRUTH = {
+    "2026-01": (84, 49, 73231387.52),
+    "2026-02": (93, 52, 32818229.88),
+    "2026-03": (77, 54, 29691351.38),
+    "2026-04": (67, 39, 26931710.45),
+    "2026-05": (177, 72, 75862973.70),
+    "2026-06": (91, 72, 48803963.07),
+    "2026-07": (140, 208, 79175425.28),
+    "2026-08": (74, 26, 48877872.75),
+    "2026-09": (78, 36, 50382901.69),
+}
+
+PDF_BOILERPLATE_PREFIXES = (
+    "CoM - DSA", "COUNTY OF MAUI", "DEVELOPMENT SERVICES ADMINISTRATION",
+    "110 ALAIHI STREET", "KAHULUI, HI", "(808) 270-7250", "BUILDING PERMITS ISSUED",
+    "Run Date:", "Permit # Name/Description", "Site Address", "Issue Date",
+    "Subtotal Valuation:", "Subtotal # Units:", "Subtotal # Permits:",
+    "Total # of Permits", "OVERALL TOTAL:", "TOTAL # PERMITS", "UNITS:",
+    "TOTAL VALUATION:",
+)
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July",
+               "August", "September", "October", "November", "December")
+PDF_ROW_RE = re.compile(r"^(\d+)\s+\$([\d,]+)$")
+PDF_PERMIT_RE = re.compile(r"^([A-Z]\d{4}-\d{5})\s*(.*)$")
+PDF_DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+HI_ZIP_RE = re.compile(r"HI\s+\d{5}")
+
+
+def _lines_from_pdf_raw_text(path: Path) -> list[str]:
+    raw_lines = [l.strip() for l in path.read_text().split("\n") if l.strip()]
+    lines = []
+    for l in raw_lines:
+        if l.startswith(PDF_BOILERPLATE_PREFIXES) or l.startswith(MONTH_NAMES):
+            continue
+        # a lone month-range line, e.g. "February 01, 2026   to   February 28, 2026"
+        if re.match(r"^[A-Za-z]+ \d{1,2}, \d{4}\s+to\s+[A-Za-z]+ \d{1,2}, \d{4}$", l):
+            continue
+        lines.append(l)
+    return lines
+
+
+def parse_pdf_report(path: Path) -> pd.DataFrame:
+    """Parses a monthly report extracted with `pdftotext -raw` (a different,
+    more scrambled field order than the HTML transcript's one-field-per-line
+    layout -- see module docstring's "PDF (-raw) FORMAT" note). Reusing the
+    HTML parser's line-token approach isn't possible: -raw emits each
+    record's fields in the fixed but non-reading-order sequence
+    row+valuation, units, description (multi-line), issue date, permit#+
+    builder-first-fragment, then an unlabeled run of further builder lines
+    and 1-2 site-address blocks (order between them not separately marked),
+    then 1-2 TMK lines -- discovered by inspecting several categories
+    including one ("Two Unit Buildings") where a single permit carries TWO
+    site addresses sharing ONE TMK, and another where a single address
+    carries TWO TMK lines (a multi-unit TMK's CPR-suffixed children)."""
+    lines = _lines_from_pdf_raw_text(path)
+    month = _month_from_filename(path)
+    records = []
+    category = None
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m = PDF_ROW_RE.match(line)
+        if m:
+            row_num, valuation = m.group(1), m.group(2)
+            # the "# Units" field is sometimes omitted outright (confirmed:
+            # rows 91-92 of the 2026-02 report have no units line at all --
+            # the description starts immediately after row+valuation), so
+            # only consume the next line as units if it's a bare integer.
+            if i + 1 < n and re.match(r"^\d+$", lines[i + 1]):
+                units = lines[i + 1]
+                j = i + 2
+            else:
+                units = "0"
+                j = i + 1
+            # description: collect lines until the issue-date line
+            desc_parts = []
+            while j < n and not PDF_DATE_RE.match(lines[j]):
+                desc_parts.append(lines[j])
+                j += 1
+                if j - i > 10:
+                    break
+            if j >= n:
+                i += 1
+                continue
+            issue_date = lines[j]
+            j += 1
+            pm = PDF_PERMIT_RE.match(lines[j]) if j < n else None
+            if not pm:
+                i += 1
+                continue
+            permit_no = pm.group(1)
+            builder_first = pm.group(2)
+            j += 1
+            # collect everything up to (but not including) the first TMK
+            # line. A TMK line can have a stray leading ", " glued onto it
+            # when the row's Site Address field is otherwise blank
+            # (confirmed: row 92 of the 2026-02 report: ", 2220050040000-
+            # 5338") -- so search for the TMK pattern anywhere in the line,
+            # not just as a full-line match, via TMK_ANYWHERE_RE.
+            pre_tmk = []
+            while j < n and not TMK_ANYWHERE_RE.search(lines[j]):
+                # a record with NO address/TMK at all (confirmed: permit
+                # B2026-00593, "COUNTY OF MAUI - TESTER" in the 2026-06
+                # report, has no site address or TMK whatsoever -- a
+                # placeholder/test permit) must not run away consuming the
+                # rest of the file waiting for a TMK that never comes.
+                # Detect that we've reached the NEXT record's start instead
+                # of using an arbitrary line-count cap (legitimate
+                # builder+address runs vary in length): the next record
+                # always starts with its own "<row> $<valuation>" line,
+                # a pattern nothing in a builder/address field matches.
+                if PDF_ROW_RE.match(lines[j]):
+                    break
+                pre_tmk.append(lines[j])
+                j += 1
+                if j - i > 30:  # last-resort safety valve against a truly malformed file
+                    break
+            if j < n and TMK_ANYWHERE_RE.search(lines[j]):
+                tmk = TMK_ANYWHERE_RE.search(lines[j]).group(0)  # strips any glued prefix
+                j += 1      # right after is a sub-unit of the same parcel, skip it
+                while j < n and TMK_RE.match(lines[j]):
+                    j += 1
+            elif not any(HI_ZIP_RE.search(pl) for pl in pre_tmk):
+                # no TMK found, and nothing in pre_tmk contains an address's
+                # "HI #####" pattern either -- a genuine TMK-less record,
+                # not a parsing failure (what IS in pre_tmk at this point is
+                # leftover orphaned numeric fragments from the report's own
+                # split subtotal/grand-total labels, e.g. a lone "1" or
+                # "72 $48,803,963.07" -- harmless noise, not an address).
+                # Keep the record (it still counts toward the month's
+                # permit/unit/valuation totals) with a blank TMK, which will
+                # simply fail to join to a parcel downstream.
+                tmk = ""
+                pre_tmk = []  # discard that leftover noise -- not builder/address text
+            else:
+                i += 1
+                continue
+            # split pre_tmk into (builder continuation) + (address block(s)):
+            # address starts at the first line beginning with a digit that
+            # is itself, or within the next couple of lines, followed by a
+            # "HI #####" pattern -- confirmed against the dual-address and
+            # 3-line-street-wrap cases (see docstring).
+            addr_start = len(pre_tmk)
+            for k, pl in enumerate(pre_tmk):
+                if re.match(r"^\d", pl) and any(HI_ZIP_RE.search(x) for x in pre_tmk[k:k + 3]):
+                    addr_start = k
+                    break
+            builder_lines = pre_tmk[:addr_start]
+            site_address = " ".join(pre_tmk[addr_start:])
+            builder = " ".join([builder_first] + builder_lines) if builder_lines else builder_first
+            description = " ".join(p for p in desc_parts if p.lower() != "options: n/a")
+            records.append({
+                "month": month,
+                "category": category,
+                "row_num": row_num,
+                "permit_no": permit_no,
+                "issue_date": issue_date,
+                "description": description,
+                "site_address": site_address,
+                "tmk_raw": tmk,
+                "units": units,
+                "valuation_raw": "$" + valuation,
+                "builder": builder,
+            })
+            i = j
+            continue
+        if line in MONTH_NAMES:
+            i += 1
+            continue
+        # category header: a line containing at least one letter, not itself
+        # boilerplate, immediately followed by a record's row+valuation
+        # line. Requiring a letter excludes an orphaned numeric fragment
+        # left over from a split subtotal label (confirmed: a lone "6" --
+        # really "Subtotal # Permits: 6" with its label filtered out as
+        # boilerplate -- sitting between one category's last TMK and the
+        # next category's first record, which would otherwise be
+        # misread as that next category's name).
+        if i + 1 < n and PDF_ROW_RE.match(lines[i + 1]) and re.search(r"[A-Za-z]", line):
+            category = line
+        i += 1
+    return pd.DataFrame(records)
+
+
 def _normalize_category(cat: str | None) -> str | None:
-    """Folds a page-break "Continuation of X table." label back into X,
-    so a category split across a PDF page boundary counts as one category
+    """Folds a page-break "Continuation of X table." label back into X, and
+    collapses whitespace, so a category split across a PDF page boundary,
+    or spelled with inconsistent spacing by the source report itself
+    (confirmed: some months print "Repair, Relocate", others "Repair,
+    Relocate" with no space before "Relocate"), counts as one category
     rather than two in any aggregation."""
     if cat is None:
         return cat
     m = re.match(r"^Continuation of (?:the )?(.+?)(?: table)?\.?$", cat)
     cat = m.group(1) if m else cat
+    cat = re.sub(r",(\S)", r", \1", cat)  # "Repair,Relocate" -> "Repair, Relocate"
     return cat.rstrip(".")
 
 
@@ -262,14 +456,15 @@ def join_to_parcels(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
-    files = sorted(glob.glob(str(REPORTS_DIR / "*.html")))
-    if not files:
+    html_files = sorted(glob.glob(str(REPORTS_DIR / "*.html")))
+    txt_files = sorted(glob.glob(str(REPORTS_DIR / "*.txt")))
+    if not html_files and not txt_files:
         raise RuntimeError(
-            f"No permit report transcripts found in {REPORTS_DIR} -- these are manually pulled "
+            f"No permit report files found in {REPORTS_DIR} -- these are manually pulled "
             "one at a time from mauicounty.gov/DocumentCenter/Index/7188 (blocked to automated "
             "fetches), so there's nothing to fetch here automatically."
         )
-    frames = [parse_report(Path(f)) for f in files]
+    frames = [parse_report(Path(f)) for f in html_files] + [parse_pdf_report(Path(f)) for f in txt_files]
     df = pd.concat(frames, ignore_index=True)
     df = clean(df)
     joined = join_to_parcels(df)
@@ -278,18 +473,42 @@ def main() -> None:
     months = sorted(joined["month"].unique())
     print(f"{len(joined)} permit records across {len(months)} month(s) ({', '.join(months)}) -> {OUT_PATH}")
     print(f"Total valuation: ${joined['valuation_usd'].sum():,.2f} | total units: {joined['units'].sum()}")
+
+    print("\nReconciliation against each report's own printed month total "
+          "(MONTHLY_GROUND_TRUTH, read by hand, not derived from this parser):")
+    all_match = True
+    for month in months:
+        mdf = joined[joined["month"] == month]
+        parsed = (len(mdf), int(mdf["units"].sum()), round(float(mdf["valuation_usd"].sum()), 2))
+        truth = MONTHLY_GROUND_TRUTH.get(month)
+        if truth is None:
+            print(f"  {month}: parsed {parsed} -- no ground truth on file, not checked")
+            continue
+        ok = parsed[0] == truth[0] and parsed[1] == truth[1] and abs(parsed[2] - truth[2]) < 1.0
+        all_match &= ok
+        flag = "OK" if ok else "MISMATCH"
+        print(f"  {month}: parsed {parsed} vs report {truth}  [{flag}]")
+    if not all_match:
+        print("\n  WARNING: at least one month did not reconcile exactly. As of 2026-10-26 the "
+              "only known case is 2026-05, off by $2.70 on 68 records in one category -- verified "
+              "by hand-summing that category's raw extracted digit strings independently of this "
+              "parser, which matches this script's output exactly (both $3 short of the report's "
+              "own printed subtotal), so the discrepancy is in the source PDF's text extraction "
+              "(a likely kerning/glyph-overlap misread in a block of many near-identical $313,187 "
+              "values), not a parsing bug. Permit counts and unit counts match exactly for every "
+              "month including this one. Any OTHER mismatch, or any permit/unit-count mismatch, "
+              "is new and should be investigated before trusting this run.")
+
     adu = joined[joined["is_likely_adu"]]
     print(f"\n{len(adu)} record(s) with ADU-suggestive description text (lower bound, not a permit-type field):")
     for _, r in adu.iterrows():
         print(f"  {r['month']}  {r['permit_no']}  {r['description'][:70]}")
-    print("\nBy category:")
+    print("\nBy category (all months combined):")
     print(joined.groupby("category").agg(permits=("permit_no", "count"),
                                           units=("units", "sum"),
                                           valuation=("valuation_usd", "sum")))
-    if len(months) == 1:
-        print("\nOnly one month of data -- NOT sufficient for an absorption-rate calibration "
-              "(see honolulu_real_adu_absorption_rate()'s multi-year basis for comparison). "
-              "Additional months from the same DocumentCenter index would materially improve this.")
+    print("\nADU-suggestive share of all permits, by month:")
+    print(joined.assign(is_adu=joined["is_likely_adu"]).groupby("month")["is_adu"].agg(["sum", "count"]))
 
 
 if __name__ == "__main__":
