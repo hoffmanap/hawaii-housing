@@ -177,6 +177,31 @@
     box-shadow: 5px 5px 0 var(--ink);
     padding: 16px;
   }
+  /* Scenario Explorer: the county picker/headline reform cards and the
+     map are the things you need in view WHILE reading the longer
+     controls notes or scrolling the chart/table -- scrolling past them
+     used to just lose them off the top of the viewport. #headline-panel
+     pins to the very top of the scroll; #map-panel pins right below it
+     (offset is computed in JS from the headline panel's actual height,
+     since that height changes with the county selection and viewport
+     width). Both release naturally once the page scrolls past the
+     bottom of the Scenario Explorer grid (standard position:sticky
+     behavior -- a sticky item can't stick past its own container). Only
+     applies above the 1100px breakpoint where the 3-column grid is
+     actually side-by-side; below that everything already stacks in one
+     column and there's nothing to pin against. */
+  @media (min-width: 1101px) {
+    #headline-panel { position: sticky; top: 0; z-index: 10; }
+    /* #map-panel-cell is the actual grid item, and CSS Grid's default
+       align-items:stretch makes it as tall as the row (i.e. as tall as
+       the longest column). #map-panel, the visual box with the border
+       and the map in it, is its child and keeps its own natural
+       (short) height -- that height difference is what gives
+       position:sticky room to actually stick, rather than sticking an
+       element to a container of the exact same size, which has no
+       effect. */
+    #map-panel { position: sticky; z-index: 5; }
+  }
   .panel h2 {
     margin: 0 0 12px;
     font-size: 13px;
@@ -534,9 +559,11 @@
     </div>
   </div>
 
-  <div class="panel">
-    <h2>Tract map</h2>
-    <div id="map"></div>
+  <div id="map-panel-cell">
+    <div class="panel" id="map-panel">
+      <h2>Tract map</h2>
+      <div id="map"></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -1262,6 +1289,20 @@ let geoData = null;
 let map, geoLayer, barChart;
 let lastFitCountyKey = null; // forces the first real fitBounds to happen once the map is actually visible -- see render()'s fitBounds call and the tab-click handler
 let pendingMapFit = true;
+
+// Keeps #map-panel's sticky offset matched to #headline-panel's actual
+// rendered height, which changes with the county selection (the note
+// paragraph under the checkboxes shows/hides) and with viewport width
+// (the reform cards and fieldsets wrap differently). No-ops below the
+// 1101px breakpoint where neither panel is sticky (see CSS).
+function syncStickyMapOffset() {
+  const hp = document.getElementById("headline-panel");
+  const mp = document.getElementById("map-panel");
+  if (!hp || !mp) return;
+  const hpVisible = hp.style.display !== "none" && hp.offsetParent !== null;
+  mp.style.top = (hpVisible ? hp.getBoundingClientRect().height : 0) + 12 + "px";
+}
+window.addEventListener("resize", syncStickyMapOffset);
 let defaultAbsorptionRate = 0.063;
 let defaultFeeUsd = 50000;
 // scenarioCounties defaults to EVERY built-out county (statewide), per the
@@ -1428,6 +1469,7 @@ async function init() {
       } else if (tab === "assumptions") {
         renderAssumptionsTab();
       } else if (tab === "scenario" && map) {
+        syncStickyMapOffset();
         setTimeout(() => {
           map.invalidateSize();
           if (pendingMapFit && geoLayer && geoLayer.getLayers().length) {
@@ -1724,6 +1766,7 @@ function render() {
   renderStats();
   renderReformCompare();
   renderBarAndTable();
+  syncStickyMapOffset();
 }
 
 function renderRamp(max) {
