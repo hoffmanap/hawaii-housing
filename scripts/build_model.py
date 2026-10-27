@@ -1660,6 +1660,8 @@ COUNTY_FIPS = {"honolulu": "003", "hawaii": "001", "kauai": "007", "maui": "009"
 COUNTY_RURAL_LABEL = {
     "kauai": "Rural Kaua'i (unincorporated)",
     "honolulu": "Rural O'ahu (unincorporated)",
+    "hawaii": "Rural Hawai'i County (unincorporated)",
+    "maui": "Rural Maui County (unincorporated)",
 }
 
 

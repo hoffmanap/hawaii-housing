@@ -761,6 +761,21 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
     tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
     tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts if f["properties"]["GEOID"].startswith(fips_prefix)}
 
+    # Real tract -> CDP place-name crosswalk (added 2026-10-27 -- same
+    # land-area-overlap join already used for Kaua'i/Honolulu,
+    # bm.tract_to_place_crosswalk() was already generic by `county`, just
+    # never called here). Without this, index.html's "by place" view had
+    # no place_name to group by for either county and silently collapsed
+    # ALL of a county's tracts into one undefined-key group -- a single,
+    # grossly oversized bubble that blew out the scatter chart's shared
+    # axis range for every other county shown alongside it. A tract with
+    # no CDP overlap gets COUNTY_RURAL_LABEL's real "Rural <county>
+    # (unincorporated)" label, same as Kaua'i/Honolulu, not left ungrouped.
+    place_by_geoid = {}
+    if (RAW_DIR / "census_places.json").exists():
+        crosswalk = bm.tract_to_place_crosswalk(county=county)
+        place_by_geoid = {r["GEOID"]: r["place_name"] for r in crosswalk.to_dict("records")}
+
     # Real sales comps, where available: Maui (added 2026-10-26 --
     # scripts/process_maui_sales_exports.py) and Hawai'i County (added
     # 2026-10-27 -- scripts/process_hawaii_county_sales_exports.py, a
@@ -839,6 +854,7 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
             "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
             "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
             "area_land_sqmi": (feat["properties"].get("AREALAND") or 0) / 2_589_988.11,
+            "place_name": place_by_geoid.get(geoid),
             "sales_median_price_per_sqft": sales_r.get("median_price_per_sqft"),
             "sales_count_2026": sales_r.get("sales_count"),
         }
