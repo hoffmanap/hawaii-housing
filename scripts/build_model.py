@@ -190,25 +190,35 @@ COUNTY_CONFIG = {
         # a different legal concept with a different eligibility test) --
         # left unwired rather than guessed.
         "owner_occupied_taxclasses": None,
-        # CONFIRMED 2026-10-26 against the PRIMARY ordinance text itself
-        # (Hawai'i County Clerk's WebLink record, Ordinance No. 24-70 /
-        # Bill 123 Draft 5, effective October 7, 2024 -- fetched directly
-        # via the clerk's own DocumentService API, not news coverage;
-        # amends Hawai'i County Code Chapter 25, Article 6, Division 3).
-        # This UPGRADES and CORRECTS the earlier news-sourced citation:
+        # CONFIRMED 2026-10-27 against a clean, directly-fetched copy of
+        # the primary ordinance text itself (ORD_2024-070_2022-2024.pdf,
+        # user-supplied, a legislative redline of Ordinance No. 24-70 /
+        # Bill 123 Draft 5 amending Hawai'i County Code Chapter 25,
+        # Article 6, Division 3 -- confirmed by rasterizing and visually
+        # reading the actual page, not just text-extracting it, given
+        # this corrects an earlier claim made in this same codebase).
         # Section 25-6-31(a) permits ADUs on Residential (RS), Duplex
         # (RD), Residential-Agricultural (RA), Family Agricultural (FA),
         # and Agricultural (A) districts -- confirming the district set
-        # already used here -- but Section 25-6-36 (the new "Density
-        # limit" section) actually caps it at ONE accessory dwelling unit
-        # per primary dwelling unit authorized by the applicable zoning
-        # regulations, NOT "up to 3 ADUs/property" as the news coverage
-        # this project originally relied on had claimed -- that figure
-        # does not appear anywhere in the actual ordinance text and is
-        # now known to be wrong. (This project's model only computes
-        # binary per-parcel eligibility, not a per-parcel ADU count, so
-        # this correction doesn't change any computed figure -- it only
-        # corrects a secondhand claim stated in commentary/docs.) No lot
+        # already used here. Section 25-6-36 ("Density limit") reads:
+        # "Accessory dwelling units shall be restricted to a maximum of
+        # three per building site, except, where a building site is
+        # permitted to have more than one primary dwelling, one accessory
+        # dwelling unit shall be allowed for each primary dwelling
+        # authorized by the applicable zoning regulations." I.e. the
+        # GENERAL rule is up to 3 ADUs per building site; "one per
+        # primary dwelling" is only the exception for sites that already
+        # permit multiple primary dwellings. An EARLIER version of this
+        # comment, based on a different (apparently incomplete or
+        # misread) fetch of this same ordinance, stated the reverse --
+        # that the 1-per-primary-dwelling exception was the general rule
+        # and that news coverage's "up to 3" figure was wrong. That
+        # earlier claim is now itself corrected back, on the strength of
+        # this cleaner source: the original "up to 3" figure was right
+        # all along. (This project's model only computes binary
+        # per-parcel eligibility, not a per-parcel ADU count, so neither
+        # version of this correction changes any computed figure -- both
+        # only affect a secondhand claim stated in commentary/docs.) No lot
         # size minimum gates eligibility (Section 25-6-35's old 10,000
         # sqft minimum building-site-area rule was explicitly repealed by
         # this same ordinance), so adu_min_lot_sqft=0 means "don't gate,"
