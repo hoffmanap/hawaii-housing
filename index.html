@@ -145,6 +145,15 @@
     align-items: start;
   }
   @media (max-width: 900px) { .conditions-section { grid-template-columns: 1fr; } }
+  /* Grid items default to min-width:auto, which lets a responsive
+     Chart.js canvas (an intrinsically-sized replaced element) force its
+     own grid track wider than the panel, pushing the chart's right edge
+     past the panel border instead of shrinking to fit. min-width:0
+     lets the track -- and the canvas inside it -- shrink to the
+     container's actual width, which is what "responsive" is supposed
+     to mean here. */
+  .conditions-section > * { min-width: 0; }
+  .layout > .panel { min-width: 0; }
   .conditions-section h3 { margin: 0 0 4px; font-size: 20px; }
   .conditions-section .takeaway { font-size: 14px; line-height: 1.6; }
   .conditions-section .takeaway .stat-line { font-weight: 600; margin-top: 8px; }
@@ -1251,7 +1260,8 @@ const COLORS = {
 
 let geoData = null;
 let map, geoLayer, barChart;
-let lastFitCountyKey = "kauai,honolulu"; // matches state.scenarioCounties' initial value -- see render()'s fitBounds call
+let lastFitCountyKey = null; // forces the first real fitBounds to happen once the map is actually visible -- see render()'s fitBounds call and the tab-click handler
+let pendingMapFit = true;
 let defaultAbsorptionRate = 0.063;
 let defaultFeeUsd = 50000;
 // scenarioCounties defaults to EVERY built-out county (statewide), per the
@@ -1418,7 +1428,13 @@ async function init() {
       } else if (tab === "assumptions") {
         renderAssumptionsTab();
       } else if (tab === "scenario" && map) {
-        setTimeout(() => map.invalidateSize(), 50);
+        setTimeout(() => {
+          map.invalidateSize();
+          if (pendingMapFit && geoLayer && geoLayer.getLayers().length) {
+            map.fitBounds(geoLayer.getBounds().pad(0.08), { animate: false });
+            pendingMapFit = false;
+          }
+        }, 50);
       }
     });
   });
@@ -1686,9 +1702,22 @@ function render() {
   // "skip, don't zero-fill" principle is meant to avoid on the data
   // side; this is the map-side equivalent.
   const currentCountyKey = selectedCounties.slice().sort().join(",");
-  if (currentCountyKey !== lastFitCountyKey && geoLayer.getLayers().length) {
-    map.fitBounds(geoLayer.getBounds().pad(0.08), { animate: false }); // no animation -- rapid checkbox toggles (e.g. unchecking two boxes in quick succession) could otherwise interrupt an in-flight pan/zoom and leave the map in a stale intermediate view
+  if (currentCountyKey !== lastFitCountyKey) {
     lastFitCountyKey = currentCountyKey;
+    pendingMapFit = true;
+  }
+  // Only actually call fitBounds while the Scenario Explorer tab is
+  // visible -- Leaflet computes the fit from the container's current
+  // pixel size, and #map is display:none (0x0) on first page load and
+  // whenever another tab is active, which previously locked the map
+  // into a broken zoom-0/whole-world view the very first time render()
+  // ran. When the tab is hidden, leave pendingMapFit set so the
+  // tab-click handler below (which already calls invalidateSize) does
+  // the deferred fit once the container has a real size.
+  const scenarioTabVisible = document.getElementById("scenario-tab").style.display !== "none";
+  if (pendingMapFit && scenarioTabVisible && geoLayer.getLayers().length) {
+    map.fitBounds(geoLayer.getBounds().pad(0.08), { animate: false }); // no animation -- rapid checkbox toggles (e.g. unchecking two boxes in quick succession) could otherwise interrupt an in-flight pan/zoom and leave the map in a stale intermediate view
+    pendingMapFit = false;
   }
 
   renderRamp(max);
