@@ -761,14 +761,18 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
     tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
     tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts if f["properties"]["GEOID"].startswith(fips_prefix)}
 
-    # Real sales comps, where available (Maui, added 2026-10-26 --
-    # scripts/process_maui_sales_exports.py; user-supplied exports, same
-    # "no self-service bulk export" situation as Kaua'i's). This is
+    # Real sales comps, where available: Maui (added 2026-10-26 --
+    # scripts/process_maui_sales_exports.py) and Hawai'i County (added
+    # 2026-10-27 -- scripts/process_hawaii_county_sales_exports.py, a
+    # third-party Regrid export, since this county's own qPublic portal
+    # has no bulk export at all). Both are user-supplied, same "no
+    # self-service bulk export" situation as Kaua'i's. This is
     # DELIBERATELY sales data only, not a feasibility gate -- there is no
-    # sourced construction-cost pro forma for this county yet, so these
+    # sourced construction-cost pro forma for either county yet, so these
     # numbers describe the market (what things sell for), not whether a
-    # reform pencils (see this function's own docstring). Hawai'i County
-    # has no equivalent file yet, so sales_by_geoid stays empty for it.
+    # reform pencils (see this function's own docstring). A county with
+    # no `{county}_sales_joined.csv` file yet simply leaves sales_by_geoid
+    # empty.
     sales_path = PROCESSED_DIR / f"{county}_sales_joined.csv"
     sales_by_geoid = {}
     countywide_sales_count = 0
@@ -867,7 +871,7 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
             "No TOD transit layer, parking-reform study, or ACS income/commute/rent data exists "
             "for this county" + (
                 ", and no sales data either" if not sales_path.exists() else
-                " -- real sales comps ARE now wired in (added 2026-10-26), but as market data only, "
+                " -- real sales comps ARE now wired in, but as market data only, "
                 "not a feasibility gate: there is still no sourced construction-cost pro forma for "
                 "this county to compare them against"
             ) + ", so this entry appears in Existing Conditions only, not the Scenario Explorer."
