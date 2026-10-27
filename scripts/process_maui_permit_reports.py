@@ -240,6 +240,53 @@ MONTHLY_GROUND_TRUTH = {
     "2026-07": (140, 208, 79175425.28),
     "2026-08": (74, 26, 48877872.75),
     "2026-09": (78, 36, 50382901.69),
+    "2025-01": (133, 145, 104252775.00),
+    # 2025-02 deliberately excluded: that month's supplied PDF has a broken
+    # text layer (embedded fonts with a corrupt ToUnicode CMap -- confirmed
+    # via pdftotext -raw/-layout both returning empty text and pdffonts
+    # showing fonts embedded anyway; likely a "Microsoft: Print To PDF"
+    # artifact per pdfinfo). An OCR attempt (parse_ocr_report(), tesseract
+    # on rasterized pages) cleanly recovered only 36 of 132 rows and
+    # produced an implausible aggregate (units summed to 1,296 against a
+    # true total of 102) -- too unreliable to trust, so this month is
+    # excluded from the dataset entirely rather than fed in corrupted.
+    # February's own report total, for reference, not used: (132, 102,
+    # 47,670,991.70) -- note this also differs by 1 unit from the 103
+    # December's cumulative recap shows for February, the same kind of
+    # later-revision discrepancy documented for 2025-09 below.
+    # 2025-03's own report footer prints valuation as $117,045,504.97; this
+    # parser's summed valuation differs by $1.03 on 109 records (permit and
+    # unit counts match exactly) -- the same kind of tiny source-PDF-text-
+    # extraction/rounding artifact documented for 2026-05 above, not a
+    # parsing bug.
+    "2025-03": (109, 121, 117045504.97),
+    # 2025-04 and 2025-05's OWN report footers print (156, 138, $85,267,178)
+    # and (103, 49, $72,126,635.36) respectively -- matching this parser
+    # exactly. December 2025's cumulative year-to-date recap instead shows
+    # 139 and 50 units for these months (one more each), the same kind of
+    # later-revision discrepancy documented for 2025-09 above. Ground truth
+    # here is each month's OWN report, since that's what this parser
+    # parses.
+    "2025-04": (156, 138, 85267178.00),
+    "2025-05": (103, 49, 72126635.36),
+    "2025-06": (96, 58, 29911933.00),
+    "2025-07": (143, 65, 107874410.00),
+    "2025-08": (98, 59, 39105009.00),
+    # September 2025's OWN report (2025-09.txt) prints its own total as
+    # (111, 76, $51,684,520.66), confirmed by reading that file directly.
+    # December 2025's report, in its cumulative year-to-date recap table,
+    # instead shows September as (112, 77, $51,834,520.66) -- one more
+    # permit and ~$150K more valuation. This isn't a parser discrepancy:
+    # the September PDF genuinely lists only 111 permit rows; the 112th
+    # permit the December recap counts was evidently entered into the
+    # county's system sometime after September's own report ran (a
+    # real-world reporting-lag artifact, not a data-entry error this
+    # parser could or should correct). Ground truth here is September's
+    # OWN report, since that's what this parser is actually parsing.
+    "2025-09": (111, 76, 51684520.66),
+    "2025-10": (95, 58, 35670831.00),
+    "2025-11": (63, 39, 19125072.00),
+    "2025-12": (103, 37, 25819392.51),
 }
 
 PDF_BOILERPLATE_PREFIXES = (
@@ -414,6 +461,82 @@ def parse_pdf_report(path: Path) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+OCR_ROW_START_RE = re.compile(r"^(\d+)\.?\s+([A-Z]\d{4}-\d{5})\s+(\d{1,2}/\d{1,2}/\d{4})\s+(.*)$")
+OCR_TMK_RE = re.compile(r"(\d(?:[\d ]{8,15})-\d+)")
+OCR_VALUATION_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
+OCR_UNITS_BEFORE_VALUATION_RE = re.compile(r"(?:^|\s)(\d+)\s*$")
+
+
+def parse_ocr_report(path: Path) -> pd.DataFrame:
+    """Parses a monthly report OCR'd with tesseract (from `pdftoppm` page
+    images), used ONLY for the one supplied PDF (2025-02) whose embedded
+    text layer is empty despite having embedded fonts -- confirmed via
+    `pdftotext -raw/-layout` both returning blank text and `pdffonts`
+    showing embedded CID TrueType fonts anyway; `pdfinfo` shows "Producer:
+    Microsoft: Print To PDF", a known source of broken ToUnicode CMaps
+    that make a font's glyphs unmappable to text even though pdftotext
+    has no way to know that in advance. OCR text is noisy in ways the
+    other two parsers' sources aren't (extra/missing spaces inside
+    numbers, inserted stray characters like "=" or "—", garbled
+    "Subtotal # Permits;" punctuation, "TK" for "TMK"), so this parser
+    takes a field-by-field extraction approach (search for each field's
+    own pattern anywhere on the row-start line) rather than a strict
+    positional grammar the way the other two parsers can afford to.
+    It does NOT attempt to reconstruct the full multi-line site address
+    (the city/state/zip often lands on a separate OCR line, sometimes
+    reordered around a page break) -- only the TMK, units, valuation,
+    and description (for ADU keyword matching) are extracted, which is
+    everything the absorption-rate calibration actually needs; site
+    address exists in the output only to the extent it appears on each
+    record's own first line."""
+    raw_lines = [l.rstrip() for l in path.read_text().split("\n")]
+    month = _month_from_filename(path)
+    records = []
+    category = None
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in ("Permit # Issue Date Name/Description of Work Site Address TMK # Units Valuation Builder",):
+            continue
+        if re.match(r"^[A-Za-z ,'\.]+$", stripped) and len(stripped) < 60 and not stripped.startswith("Options"):
+            # a plausible category header: short, all-letters-and-punctuation
+            category = stripped
+            continue
+        m = OCR_ROW_START_RE.match(stripped)
+        if not m:
+            continue
+        row_num, permit_no, issue_date, rest = m.groups()
+        tmk_m = OCR_TMK_RE.search(rest)
+        if not tmk_m:
+            continue  # can't join or validate without a TMK; drop rather than guess
+        tmk = re.sub(r"\s+", "", tmk_m.group(1))
+        before_tmk = rest[: tmk_m.start()]
+        after_tmk = rest[tmk_m.end():]
+        val_m = OCR_VALUATION_RE.search(after_tmk)
+        if not val_m:
+            continue
+        valuation = val_m.group(1)
+        units_m = OCR_UNITS_BEFORE_VALUATION_RE.search(after_tmk[: val_m.start()])
+        units = units_m.group(1) if units_m else "0"
+        builder = after_tmk[val_m.end():].strip()
+        description = before_tmk.strip().rstrip(",")
+        records.append({
+            "month": month,
+            "category": category,
+            "row_num": row_num,
+            "permit_no": permit_no,
+            "issue_date": issue_date,
+            "description": description,
+            "site_address": "",  # not reconstructed -- see docstring
+            "tmk_raw": tmk,
+            "units": units,
+            "valuation_raw": "$" + valuation,
+            "builder": builder,
+        })
+    return pd.DataFrame(records)
+
+
 def _normalize_category(cat: str | None) -> str | None:
     """Folds a page-break "Continuation of X table." label back into X, and
     collapses whitespace, so a category split across a PDF page boundary,
@@ -489,15 +612,14 @@ def main() -> None:
         flag = "OK" if ok else "MISMATCH"
         print(f"  {month}: parsed {parsed} vs report {truth}  [{flag}]")
     if not all_match:
-        print("\n  WARNING: at least one month did not reconcile exactly. As of 2026-10-26 the "
-              "only known case is 2026-05, off by $2.70 on 68 records in one category -- verified "
-              "by hand-summing that category's raw extracted digit strings independently of this "
-              "parser, which matches this script's output exactly (both $3 short of the report's "
-              "own printed subtotal), so the discrepancy is in the source PDF's text extraction "
-              "(a likely kerning/glyph-overlap misread in a block of many near-identical $313,187 "
-              "values), not a parsing bug. Permit counts and unit counts match exactly for every "
-              "month including this one. Any OTHER mismatch, or any permit/unit-count mismatch, "
-              "is new and should be investigated before trusting this run.")
+        print("\n  WARNING: at least one month did not reconcile exactly. As of 2026-10-27 the "
+              "only known cases are tiny valuation-only rounding gaps (2025-03: $1.03 on 109 "
+              "records; 2026-05: $2.70 on 68 records in one category), both verified by hand-"
+              "summing the raw extracted digit strings independently of this parser and getting "
+              "this same figure, pointing to the source PDF's own text extraction (not a parsing "
+              "bug). Permit counts and unit counts match exactly for every month. Any OTHER "
+              "mismatch, or any permit/unit-count mismatch, is new and should be investigated "
+              "before trusting this run.")
 
     adu = joined[joined["is_likely_adu"]]
     print(f"\n{len(adu)} record(s) with ADU-suggestive description text (lower bound, not a permit-type field):")

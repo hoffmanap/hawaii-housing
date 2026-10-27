@@ -644,21 +644,24 @@ def maui_real_adu_absorption_rate() -> dict:
     cross-checks against each report's own printed totals, and known
     caveats).
 
-    THIS DIFFERS FROM HONOLULU'S CALIBRATION IN TWO IMPORTANT WAYS, both
-    making this a weaker, more conservative estimate than Honolulu's:
+    THIS DIFFERS FROM HONOLULU'S CALIBRATION IN TWO WAYS, one of them now
+    largely closed, making this a still-slightly-weaker but much
+    stronger-than-before estimate relative to Honolulu's:
 
-    1. Partial year, not complete years. As of 2026-10-26 only January-
-       September 2026 (COMPLETE_MONTHS below) have been supplied -- 9 of
-       12 months, all from the same single calendar year. Honolulu's
-       calibration averages several COMPLETE years; this instead takes
-       the 9-month average permits/month and multiplies by 12 to
-       annualize. That's a reasonable estimate given no seasonal pattern
-       is yet established one way or the other, but it is extrapolation
-       from 9 months, not an observed annual rate, and it reflects only
-       2026 (no multi-year averaging to smooth out one unusual year --
-       and 2026 includes an active post-Lahaina-fire ADU rebuild wave,
-       which may itself not be representative of a "normal" year; see
-       is_adu_count's note below).
+    1. Spans most of two calendar years, not several complete years. As
+       of 2026-10-27, 20 months are in hand: all of 2025 except February
+       (that month's source PDF has an unrecoverable broken text layer --
+       see process_maui_permit_reports.py's MONTHLY_GROUND_TRUTH comments
+       -- so it's excluded rather than estimated), plus January-September
+       2026. This averages permits/month across 20 months spanning 2
+       different years (versus the original 9-month, single-year basis),
+       which meaningfully smooths out single-month anomalies -- e.g. the
+       active post-Lahaina-fire ADU rebuild wave that shows up in 2026 is
+       now balanced against a full 2025 that mostly predates it. It is
+       still extrapolation (avg monthly rate x 12) rather than an average
+       of complete observed annual totals like Honolulu's calibration,
+       since neither 2025 (missing February) nor 2026 (missing October-
+       December, still in progress) is itself a complete year.
     2. Free-text identification, not a permit-type field. Maui's report
        has no dedicated ADU/Ohana permit-type column (unlike Honolulu's
        ohana/accessorydwellingunitadu fields or Hawai'i County's
@@ -701,12 +704,14 @@ def maui_real_adu_absorption_rate() -> dict:
         "absorption_rate": decade_equivalent_pct / 100.0,
         "generic_benchmark_pct_for_comparison": round(absorption_rate_benchmark_for("maui") * 100.0, 1),
         "caveats": (
-            "Extrapolated from 9 months of a single calendar year (2026), not multiple "
-            "complete years like Honolulu's equivalent calibration; and is_likely_adu is a "
-            "free-text keyword match on the permit description, not an authoritative "
-            "permit-type field, so the true rate is likely higher than this. 2026 includes "
-            "active post-Lahaina-fire ADU rebuild permitting, which may not represent a "
-            "'normal' year going forward."
+            "Extrapolated (avg monthly rate x 12) from 20 months spanning 2 calendar years "
+            "(all of 2025 except February, which is excluded due to an unrecoverable broken "
+            "source-PDF text layer, plus January-September 2026), not averaged complete-year "
+            "totals like Honolulu's equivalent calibration; and is_likely_adu is a free-text "
+            "keyword match on the permit description, not an authoritative permit-type field, "
+            "so the true rate is likely higher than this. 2026 includes active post-Lahaina-"
+            "fire ADU rebuild permitting, now balanced against a fuller, mostly pre-rebuild-"
+            "wave 2025 in this average."
         ),
         "source": (
             "Maui County DSA 'Building Permits Issued' monthly reports "
@@ -965,8 +970,8 @@ def run_adu_scenario(county: str, params: ScenarioParams | None = None) -> tuple
         absorption_rate = honolulu_real_adu_absorption_rate()["absorption_rate"]
         absorption_rate_source = "honolulu_real_adu_permits"
     elif county == "maui" and (OUT_DIR / "maui_permits_parsed.csv").exists():
-        # Weaker basis than Honolulu's (9 months of one year, free-text ADU
-        # identification -- see maui_real_adu_absorption_rate()'s docstring)
+        # Weaker basis than Honolulu's (20 months spanning 2 calendar years,
+        # free-text ADU identification -- see maui_real_adu_absorption_rate()'s docstring)
         # but real, and a meaningfully better-grounded number than the
         # generic all-housing county benchmark for this one scenario.
         absorption_rate = maui_real_adu_absorption_rate()["absorption_rate"]
