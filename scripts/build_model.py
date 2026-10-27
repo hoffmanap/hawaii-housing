@@ -3219,6 +3219,14 @@ def tract_scaled_rental_feasibility(
             "financing": KAUAI_LIHUE_FINANCING,  # shared across all 4 TOD sites in the source table
             "countywide_median_gross_rent_usd": HONOLULU_COUNTYWIDE_MEDIAN_GROSS_RENT_USD,
         },
+        # Hawai'i County / Maui entries, added 2026-10-27 -- see
+        # _TRACT_SCALED_RENTAL_FEASIBILITY_EXTRA_CFG's own comment above for
+        # why these are built from the generic pro-forma constants instead
+        # of being hand-duplicated a third/fourth time inline here. Merged
+        # in at call time (not literal dict keys above) only because this
+        # dict's definition appears before the generic constants exist
+        # later in the file; functionally identical to typing them inline.
+        **_TRACT_SCALED_RENTAL_FEASIBILITY_EXTRA_CFG,
     }[county]
 
     path = acs_commute_density_csv or cfg["acs_path"]
@@ -3596,6 +3604,366 @@ def apply_dual_tenure_affordability_gate(
     merged.loc[is_for_sale, "required_income_usd"] = merged.loc[is_for_sale, "required_income_usd_for_sale"]
     merged.loc[is_rental, "required_income_usd"] = merged.loc[is_rental, "required_income_usd_rental"]
     return merged
+
+
+# ---------------------------------------------------------------------------
+# Hawai'i County and Maui pro formas, added 2026-10-27 per the user's direct
+# instruction ("do both. we have the data for all counties now"), using the
+# SAME source table as KAUAI_LIHUE_PRO_FORMA_INPUTS/OAHU_IWILEI_KAPALAMA_
+# PRO_FORMA_INPUTS above (HR&A Advisors et al., "Financial Analysis of TOD
+# Infrastructure Funding and Financing Options," State of Hawaii OPSD,
+# September 2023, "Real Estate Assumptions" table, p.52-53) -- this report
+# covers FOUR TOD pilot areas, not just Honolulu and Kaua'i: Ka'ahumanu
+# Avenue Community Corridor (Maui) and Ane Keohokalole Highway Corridor,
+# Kailua-Kona (Hawai'i County) are the other two columns, confirmed by
+# downloading and pdftotext-extracting the full report
+# (files.hawaii.gov/dbedt/op/lud/02PROJ/OPSDTODInfra_2022/
+# 3.Deliverable3_20230908_HawaiiTODInfraFin-FullFinal.pdf) rather than
+# assumed from the two counties already coded.
+#
+# Rather than duplicating ~150 lines of near-identical pro-forma/feasibility
+# code per county (the pattern KAUAI_LIHUE_*/OAHU_IWILEI_KAPALAMA_* already
+# follow), this section generalizes it ONE time behind SITE_PRO_FORMA_CONFIG
+# -- a per-county lookup -- and two new county-parameterized functions that
+# both new counties use, and that a future 5th county could reuse too. The
+# existing Kaua'i/Honolulu-specific functions above are left untouched
+# (zero risk of regressing their already-verified output); only Hawai'i
+# County and Maui route through the new generic path.
+MAUI_KAAHUMANU_PRO_FORMA_INPUTS = {
+    "townhome_for_sale": {
+        "unit_size_gsf": 1_500,
+        "hard_cost_per_gsf_usd": 420,  # source table's Townhomes Hard Costs per GSF, Maui column
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 1_213_321, "affordable": 605_100},
+    },
+    "lowrise_for_sale": {
+        "unit_size_gsf": 840,  # 700 GSF rental base x 1.20 for-sale size premium -- shared row, all 4 sites
+        "hard_cost_per_gsf_usd": 570,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 612_497, "affordable": 302_600},
+    },
+}
+# "Average Price Per SF, Mid- and High-Density Residential" -- Maui column.
+MAUI_KAAHUMANU_LAND_PRICE_PER_BUILDING_GSF_USD = 34
+# Developer profit margin (15%, for-sale) and financing terms (60%
+# loan-to-cost, 24-mo construction period, 7.00% construction interest,
+# 1.50%/1.00% fees) are under the source's own "Shared Assumptions"
+# heading and verified identical across all 4 TOD sites in the table
+# (re-confirmed 2026-10-27 against the Maui and Hawai'i County columns
+# specifically, not just assumed from the Kaua'i/Honolulu ones already
+# coded) -- so KAUAI_LIHUE_FINANCING and
+# KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE are reused as-is below,
+# same as oahu_iwilei_kapalama_development_fee_reduction_feasibility()
+# already does.
+
+HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS = {
+    "townhome_for_sale": {
+        "unit_size_gsf": 1_500,
+        "hard_cost_per_gsf_usd": 440,  # source table's Townhomes Hard Costs per GSF, Hawai'i column
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 1_061_274, "affordable": 560_900},
+    },
+    "lowrise_for_sale": {
+        "unit_size_gsf": 840,
+        "hard_cost_per_gsf_usd": 532,
+        "soft_cost_pct_of_hard": 0.15,
+        "sale_price_per_unit_usd": {"market": 549_286, "affordable": 280_500},
+    },
+}
+# "Average Price Per SF, Mid- and High-Density Residential" -- Hawai'i
+# column. An order of magnitude below Kaua'i's $36 or Maui's $34 -- the
+# Ane Keohokalole corridor is a less-developed Kailua-Kona-area site, and
+# the source's own land comps reflect that real difference, not a
+# modeling choice made here.
+HAWAII_ANEKEOHOKALOLE_LAND_PRICE_PER_BUILDING_GSF_USD = 5.5
+
+# county -> (PRO_FORMA_INPUTS dict, land $/building-GSF) for the two newly
+# added sites. Financing and developer-profit-margin constants are shared
+# across all 4 TOD sites (see note above) and are NOT duplicated per county
+# here -- every call below reuses KAUAI_LIHUE_FINANCING /
+# KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE directly, despite their
+# Kaua'i-specific names, for the same reason oahu_iwilei_kapalama_
+# development_fee_reduction_feasibility() already does.
+SITE_PRO_FORMA_CONFIG = {
+    "maui": (MAUI_KAAHUMANU_PRO_FORMA_INPUTS, MAUI_KAAHUMANU_LAND_PRICE_PER_BUILDING_GSF_USD),
+    "hawaii": (HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS, HAWAII_ANEKEOHOKALOLE_LAND_PRICE_PER_BUILDING_GSF_USD),
+}
+
+# Source labels for the "source" string in generic_development_fee_reduction_feasibility()'s
+# return value, matching the citation style of kauai_development_fee_reduction_feasibility()/
+# oahu_iwilei_kapalama_development_fee_reduction_feasibility() above.
+SITE_SOURCE_LABEL = {
+    "maui": "Ka'ahumanu Avenue Community Corridor (Maui) column.",
+    "hawaii": "Ane Keohokalole Highway Corridor (Hawai'i County) column.",
+}
+
+
+def generic_development_fee_reduction_feasibility(
+    county: str,
+    typology: str = "lowrise_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+) -> dict:
+    """
+    Hawai'i County / Maui analog of kauai_development_fee_reduction_feasibility()
+    and oahu_iwilei_kapalama_development_fee_reduction_feasibility() above,
+    generalized by `county` (one of SITE_PRO_FORMA_CONFIG's keys) instead of
+    copy-pasted per county, since this is the THIRD and FOURTH site using
+    the exact same mechanism against the exact same source report. Same
+    "excess value" feasibility test (market value minus total development
+    cost minus required developer profit -- see docs/MODEL_AND_ASSUMPTIONS.md)
+    and the same two explicit simplifications as the Kaua'i/Honolulu
+    versions: land cost allocated per building-GSF rather than a true
+    site-area/FAR basis; financing cost uses an average-outstanding-balance
+    approximation rather than a full monthly draw schedule.
+    """
+    if county not in SITE_PRO_FORMA_CONFIG:
+        raise ValueError(f"county must be one of {list(SITE_PRO_FORMA_CONFIG)}, got {county!r}")
+    pro_forma_inputs, land_price_per_gsf = SITE_PRO_FORMA_CONFIG[county]
+    inputs = pro_forma_inputs[typology]
+    unit_size = inputs["unit_size_gsf"]
+    hard_cost = unit_size * inputs["hard_cost_per_gsf_usd"]
+    soft_cost = hard_cost * inputs["soft_cost_pct_of_hard"]
+    land_cost = unit_size * land_price_per_gsf
+    cost_before_financing_and_fee = hard_cost + soft_cost + land_cost
+
+    fin = KAUAI_LIHUE_FINANCING  # shared across all 4 sites in the source table -- see note above
+    loan_amount = cost_before_financing_and_fee * fin["loan_to_cost"]
+    construction_years = fin["construction_period_months"] / 12
+    financing_interest = loan_amount * fin["construction_interest_rate"] * construction_years * 0.5
+    financing_fees = loan_amount * (fin["construction_loan_fee_pct"] + fin["permanent_loan_fee_pct"])
+    financing_cost = financing_interest + financing_fees
+
+    total_development_cost = cost_before_financing_and_fee + financing_cost + development_fee_usd
+    sale_price = inputs["sale_price_per_unit_usd"][affordability]
+    required_developer_profit = sale_price * KAUAI_LIHUE_DEVELOPER_PROFIT_MARGIN_PCT_OF_SALE
+    excess_value = sale_price - total_development_cost - required_developer_profit
+
+    return {
+        "typology": typology,
+        "affordability": affordability,
+        "development_fee_usd": round(development_fee_usd),
+        "hard_cost_usd": round(hard_cost),
+        "soft_cost_usd": round(soft_cost),
+        "land_cost_usd": round(land_cost),
+        "financing_cost_usd": round(financing_cost),
+        "total_development_cost_usd": round(total_development_cost),
+        "sale_price_usd": sale_price,
+        "required_developer_profit_usd": round(required_developer_profit),
+        "excess_value_usd": round(excess_value),
+        "feasible": excess_value >= 0,
+        "source": "HR&A Advisors et al., 'Financial Analysis of TOD Infrastructure Funding and "
+        "Financing Options,' State of Hawaii OPSD, 2023 -- Real Estate Assumptions table, "
+        + SITE_SOURCE_LABEL[county],
+    }
+
+
+def generic_tract_comps_development_fee_reduction_feasibility(
+    county: str,
+    sales_joined_csv: Path | None = None,
+    typology: str = "lowrise_for_sale",
+    affordability: str = "market",
+    development_fee_usd: float = STANDARD_DEVELOPMENT_FEE_PER_UNIT_USD,
+    min_sales_per_tract: int = 5,
+) -> pd.DataFrame:
+    """
+    Hawai'i County / Maui analog of tract_comps_development_fee_reduction_feasibility()
+    (Kaua'i's real-sales-comps version) above -- scales the site's reference
+    sale price by REAL observed transaction $/building-sqft per tract
+    instead of an ACS median-home-value ratio.
+
+    Hawai'i County's comps are scripts/process_hawaii_county_sales_exports.py's
+    output (Regrid vendor export, 2025-01-02 to 2025-05-09 -- a partial year,
+    not a full calendar year like Kaua'i/Honolulu's benchmarks, and with no
+    arm's-length/valid-sale flag -- see that script's docstring and
+    docs/DATA_PROVENANCE.md for both caveats stated plainly, not papered over).
+
+    Maui's comps are scripts/process_maui_sales_exports.py's output (the
+    county's own property-records export, with a real "Valid Sale or Other
+    Reason" flag already applied upstream).
+
+    Still scales REVENUE only, same stated asymmetry as the Kaua'i version --
+    no tract-level land-cost or hard-cost source exists yet, so cost inputs
+    stay fixed at each site's own pro-forma table figures everywhere.
+    """
+    default_sales_paths = {
+        "hawaii": OUT_DIR / "hawaii_sales_joined.csv",
+        "maui": OUT_DIR / "maui_sales_joined.csv",
+    }
+    path = sales_joined_csv or default_sales_paths[county]
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} not found -- run the county's sales-processing script first "
+            "(process_hawaii_county_sales_exports.py or process_maui_sales_exports.py)."
+        )
+    sales = pd.read_csv(path, dtype={"GEOID": str})
+    # Maui's sales-joined CSV stores GEOID as a float-formatted string
+    # ("15009030706.0") -- a real artifact of process_maui_sales_exports.py
+    # writing a numeric GEOID column to CSV, confirmed by inspecting the
+    # file directly, not assumed. Strip the trailing ".0" so this joins
+    # correctly against every other GEOID source in this project (plain
+    # 11-digit strings, e.g. census_tracts.json, ACS pulls). Hawai'i
+    # County's own sales-joined CSV already writes GEOID as a plain
+    # string, so this is a no-op there.
+    sales["GEOID"] = sales["GEOID"].str.replace(r"\.0$", "", regex=True)
+    cfg = COUNTY_CONFIG[county]
+    usable = sales[
+        (sales["building_sqft"] > 0)
+        & sales["price_per_sqft"].notna()
+        & sales["taxclass"].isin(cfg["existing_residential_taxclasses"])
+        & sales["GEOID"].notna()
+    ]
+    by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
+    by_tract = by_tract[by_tract["count"] >= min_sales_per_tract]
+
+    pro_forma_inputs, _ = SITE_PRO_FORMA_CONFIG[county]
+    base_inputs = pro_forma_inputs[typology]
+    reference_sale_price = base_inputs["sale_price_per_unit_usd"][affordability]
+    reference_price_per_sqft = reference_sale_price / base_inputs["unit_size_gsf"]
+
+    rows = []
+    for geoid, row in by_tract.iterrows():
+        scale = row["median"] / reference_price_per_sqft
+        scaled_sale_price = reference_sale_price * scale
+        original = pro_forma_inputs[typology]
+        scaled_inputs = dict(original)
+        scaled_inputs["sale_price_per_unit_usd"] = {affordability: scaled_sale_price}
+        pro_forma_inputs[typology] = scaled_inputs
+        try:
+            result = generic_development_fee_reduction_feasibility(county, typology, affordability, development_fee_usd)
+        finally:
+            pro_forma_inputs[typology] = original
+        rows.append(
+            {
+                "GEOID": geoid,
+                "comps_median_price_per_sqft": round(row["median"], 2),
+                "comps_sale_count": int(row["count"]),
+                "scaled_sale_price_usd": round(scaled_sale_price),
+                "excess_value_usd": result["excess_value_usd"],
+                "feasible": result["feasible"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+# Zillow Observed Rent Index (ZORI), Hawai'i County / Maui County, Sep 2026
+# (latest available at the time these were fetched, 2026-10-27) -- same
+# role as KAUAI_COUNTYWIDE_ZORI_USD_PER_MONTH above. Fetched live via
+# fetch_data.fetch_zillow_county_timeseries() (the same function already
+# used for Kaua'i/Honolulu), not estimated. See docs/DATA_PROVENANCE.md.
+HAWAII_COUNTYWIDE_ZORI_USD_PER_MONTH = 2_562.48  # Sep 2026
+MAUI_COUNTYWIDE_ZORI_USD_PER_MONTH = 3_207.69  # Sep 2026
+
+# ACS 2022 5-year median gross rent (B25064), tract median of medians --
+# same role as KAUAI_COUNTYWIDE_MEDIAN_GROSS_RENT_USD/HONOLULU_COUNTYWIDE_
+# MEDIAN_GROSS_RENT_USD above, used by tract_scaled_rental_feasibility()'s
+# per-county cfg dict below. Hawai'i County: 43/43 tracts report a value;
+# Maui: 42/44.
+HAWAII_COUNTYWIDE_MEDIAN_GROSS_RENT_USD = 1_359
+MAUI_COUNTYWIDE_MEDIAN_GROSS_RENT_USD = 1_894
+
+
+def generic_tract_affordability_constrained_capacity(
+    county: str,
+    income_csv: Path | None = None,
+    sales_feasibility_df: pd.DataFrame | None = None,
+    tenure: str = "for_sale",
+) -> pd.DataFrame:
+    """
+    Hawai'i County / Maui analog of honolulu_tract_affordability_constrained_capacity()
+    above, generalized by `county` rather than copy-pasted a third and
+    fourth time. Same mechanism: for `tenure="for_sale"`, required income is
+    backed out of the comps-implied price and checked against the tract's
+    real ACS B19001 (ALL households) income distribution; for
+    `tenure="rental"`, required income is backed out of the county's real
+    Zillow ZORI figure and checked against the tract's real ACS B25118
+    (RENTER-OCCUPIED-ONLY) income distribution.
+    """
+    zori_by_county = {"hawaii": HAWAII_COUNTYWIDE_ZORI_USD_PER_MONTH, "maui": MAUI_COUNTYWIDE_ZORI_USD_PER_MONTH}
+    rows = []
+    if tenure == "for_sale":
+        path = income_csv or (RAW_DIR / f"acs_income_distribution_{county}.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_income_distribution "
+                f"--county {county}` first (needs CENSUS_API_KEY)."
+            )
+        income = pd.read_csv(path, dtype={"GEOID": str})
+        if sales_feasibility_df is None:
+            raise ValueError("tenure='for_sale' requires sales_feasibility_df (a comps/ACS feasibility DataFrame).")
+        feas = sales_feasibility_df.copy()
+        feas["GEOID"] = feas["GEOID"].astype(str)
+        merged = income.merge(feas[["GEOID", "scaled_sale_price_usd"]], on="GEOID", how="inner")
+        for _, tract in merged.iterrows():
+            required_income = _required_income_for_sale_price(tract["scaled_sale_price_usd"])
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B19001_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(bracket_counts, tract["total_households"], required_income)
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": round(tract["scaled_sale_price_usd"]),
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    elif tenure == "rental":
+        path = income_csv or (RAW_DIR / f"acs_renter_income_distribution_{county}.csv")
+        if not path.exists():
+            raise RuntimeError(
+                f"{path} not found -- run `fetch_data.py --layer acs_renter_income_distribution "
+                f"--county {county}` first (needs CENSUS_API_KEY)."
+            )
+        renter_income = pd.read_csv(path, dtype={"GEOID": str})
+        required_income = _required_income_for_rent(zori_by_county[county])
+        for _, tract in renter_income.iterrows():
+            if tract["total_renter_households"] <= 0:
+                continue
+            bracket_counts = {col: tract[col] for col, _, _ in ACS_B25118_RENTER_BRACKETS_FOR_MODEL}
+            pct = _pct_households_above_income(
+                bracket_counts, tract["total_renter_households"], required_income,
+                brackets=ACS_B25118_RENTER_BRACKETS_FOR_MODEL,
+            )
+            rows.append(
+                {
+                    "GEOID": tract["GEOID"],
+                    "tenure": tenure,
+                    "price_or_rent_usd": zori_by_county[county],
+                    "required_income_usd": round(required_income),
+                    "total_households": int(tract["total_renter_households"]),
+                    "pct_households_affording": round(pct, 1),
+                }
+            )
+    else:
+        raise ValueError(f"tenure must be 'for_sale' or 'rental', got {tenure!r}")
+    return pd.DataFrame(rows)
+
+
+# Extend tract_scaled_rental_feasibility()'s per-county cfg with Hawai'i
+# County and Maui, reusing the generic pro-forma inputs above rather than
+# duplicating that function. See its docstring for the full rental-pro-forma
+# mechanism (Skyline TOD Feasibility Study rent/cap-rate inputs, no
+# developer-profit margin subtracted -- a stated, real gap, not an invented
+# substitute).
+_TRACT_SCALED_RENTAL_FEASIBILITY_EXTRA_CFG = {
+    "maui": {
+        "acs_path": RAW_DIR / "acs_commute_density_maui.csv",
+        "hard_cost_per_gsf_usd": MAUI_KAAHUMANU_PRO_FORMA_INPUTS["lowrise_for_sale"]["hard_cost_per_gsf_usd"],
+        "soft_cost_pct_of_hard": MAUI_KAAHUMANU_PRO_FORMA_INPUTS["lowrise_for_sale"]["soft_cost_pct_of_hard"],
+        "land_price_per_gsf_usd": MAUI_KAAHUMANU_LAND_PRICE_PER_BUILDING_GSF_USD,
+        "financing": KAUAI_LIHUE_FINANCING,
+        "countywide_median_gross_rent_usd": MAUI_COUNTYWIDE_MEDIAN_GROSS_RENT_USD,
+    },
+    "hawaii": {
+        "acs_path": RAW_DIR / "acs_commute_density_hawaii.csv",
+        "hard_cost_per_gsf_usd": HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS["lowrise_for_sale"]["hard_cost_per_gsf_usd"],
+        "soft_cost_pct_of_hard": HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS["lowrise_for_sale"]["soft_cost_pct_of_hard"],
+        "land_price_per_gsf_usd": HAWAII_ANEKEOHOKALOLE_LAND_PRICE_PER_BUILDING_GSF_USD,
+        "financing": KAUAI_LIHUE_FINANCING,
+        "countywide_median_gross_rent_usd": HAWAII_COUNTYWIDE_MEDIAN_GROSS_RENT_USD,
+    },
+}
 
 
 def main() -> None:

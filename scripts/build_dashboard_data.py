@@ -899,11 +899,223 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
     return features, metadata
 
 
+def build_gated_county_features(county: str) -> tuple[list, dict]:
+    """
+    Hawai'i County / Maui, upgraded 2026-10-27 from build_light_county_features()'s
+    UNGATED Baseline/Missing Middle/ADU numbers to a real feasibility +
+    affordability gate, now that both counties have a real, sourced
+    construction-cost pro forma (HR&A Advisors et al.'s OPSD TOD
+    Infrastructure Financing report covers all 4 counties, not just
+    Kaua'i/Honolulu -- see build_model.py's SITE_PRO_FORMA_CONFIG) and real
+    sales comps (process_hawaii_county_sales_exports.py /
+    process_maui_sales_exports.py) to scale it by.
+
+    Mirrors build_kauai_features()'s dual-tenure feasibility/affordability
+    wiring (generic_tract_comps_development_fee_reduction_feasibility() +
+    tract_scaled_rental_feasibility() + combine_dual_tenure_feasibility(),
+    then generic_tract_affordability_constrained_capacity() for both
+    tenures, routed through apply_dual_tenure_affordability_gate()) applied
+    to ADU and Missing Middle only -- NOT TOD or Parking Reduction, since
+    neither county has a TOD transit-stop layer or a parking-reform study
+    wired in yet (same real gap build_light_county_features() already
+    stated; not newly introduced here). Those two scenarios stay absent
+    from this county's `scenarios_available` list for exactly that reason,
+    not an oversight.
+    """
+    bm.build_county(county)
+    default_absorption_rate = bm.absorption_rate_benchmark_for(county)
+
+    adu_tract, _ = bm.run_adu_scenario(county)
+    mm_tract, _ = bm.run_missing_middle_scenario(county)
+    mm_baseline_tract = bm.run_missing_middle_baseline_tract(county)
+    zoned_capacity_tract = bm.existing_zoned_capacity_tract(county)
+
+    feas = bm.generic_tract_comps_development_fee_reduction_feasibility(county)
+    rental_feas = bm.tract_scaled_rental_feasibility(county)
+    combined_feas = bm.combine_dual_tenure_feasibility(feas, rental_feas)
+
+    adu_gated = bm.apply_feasibility_gate(adu_tract, combined_feas, "estimated_new_units")
+    mm_gated = bm.apply_feasibility_gate(mm_tract, combined_feas, "additional_estimated_units")
+
+    afford_for_sale = bm.generic_tract_affordability_constrained_capacity(county, sales_feasibility_df=feas, tenure="for_sale")
+    afford_rental = bm.generic_tract_affordability_constrained_capacity(county, tenure="rental")
+    adu_gated = bm.apply_dual_tenure_affordability_gate(adu_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
+    mm_gated = bm.apply_dual_tenure_affordability_gate(mm_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
+
+    adu_tract = adu_gated.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
+    mm_tract = mm_gated.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
+    mm_baseline_tract = mm_baseline_tract.copy(); mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
+    zoned_capacity_tract = zoned_capacity_tract.copy(); zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
+
+    adu_by_geoid = {r["GEOID"]: r for r in adu_tract.to_dict("records")}
+    mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
+    mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
+    zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
+
+    fips_prefix = COUNTY_TRACT_FIPS_PREFIX[county]
+    tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
+    tract_by_geoid = {f["properties"]["GEOID"]: f for f in tracts if f["properties"]["GEOID"].startswith(fips_prefix)}
+
+    place_by_geoid = {}
+    if (RAW_DIR / "census_places.json").exists():
+        crosswalk = bm.tract_to_place_crosswalk(county=county)
+        place_by_geoid = {r["GEOID"]: r["place_name"] for r in crosswalk.to_dict("records")}
+
+    income_path = RAW_DIR / f"acs_income_distribution_{county}.csv"
+    income_by_geoid = {}
+    if income_path.exists():
+        income_df = pd.read_csv(income_path, dtype={"GEOID": str})
+        income_by_geoid = {r["GEOID"]: r for r in income_df.to_dict("records")}
+
+    acs = pd.read_csv(RAW_DIR / f"acs_commute_density_{county}.csv", dtype={"GEOID": str})
+    acs_by_geoid = {r["GEOID"]: r for r in acs.to_dict("records")}
+
+    sales_path = PROCESSED_DIR / f"{county}_sales_joined.csv"
+    sales_by_geoid = {}
+    countywide_sales_count = 0
+    countywide_median_price_per_sqft = None
+    sales_monthly_trend = []
+    if sales_path.exists():
+        sales_df = pd.read_csv(sales_path, dtype={"GEOID": str})
+        sales_df["GEOID"] = sales_df["GEOID"].str.replace(r"\.0$", "", regex=True)
+        valid_col = sales_df["valid_sale"] if "valid_sale" in sales_df.columns else True
+        usable = sales_df[
+            (sales_df["building_sqft"] > 0)
+            & sales_df["price_per_sqft"].notna()
+            & sales_df["GEOID"].notna()
+            & valid_col
+        ].copy()
+        countywide_sales_count = int(len(usable))
+        countywide_median_price_per_sqft = (
+            round(usable["price_per_sqft"].median(), 2) if countywide_sales_count else None
+        )
+        by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
+        sales_by_geoid = {
+            geoid: {"median_price_per_sqft": round(row["median"], 2), "sales_count": int(row["count"])}
+            for geoid, row in by_tract.iterrows()
+        }
+        usable["month"] = pd.to_datetime(usable["sale_date"]).dt.to_period("M").astype(str)
+        by_month = usable.groupby("month")["price_per_sqft"].agg(["median", "count"]).reset_index()
+        sales_monthly_trend = [
+            {"month": r["month"], "median_price_per_sqft": round(r["median"], 2), "sales_count": int(r["count"])}
+            for _, r in by_month.iterrows()
+        ]
+
+    try:
+        from shapely.geometry import mapping, shape
+    except ImportError:
+        shape = mapping = None
+
+    features = []
+    for geoid, feat in tract_by_geoid.items():
+        zoned_r = zoned_by_geoid.get(geoid)
+        if zoned_r is None:
+            continue
+        adu_r = adu_by_geoid.get(geoid, {})
+        mm_r = mm_by_geoid.get(geoid, {})
+        mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
+        sales_r = sales_by_geoid.get(geoid, {})
+        acs_r = acs_by_geoid.get(geoid, {})
+        income_r = income_by_geoid.get(geoid, {})
+        props = {
+            "GEOID": geoid,
+            "county": county,
+            "name": feat["properties"].get("NAME"),
+            "place_name": place_by_geoid.get(geoid),
+            "existing_total_parcel_count": zoned_r.get("total_parcel_count"),
+            "existing_residential_parcel_count": zoned_r.get("residential_parcel_count"),
+            "existing_units_built": zoned_r.get("existing_units_built"),
+            "existing_zoned_capacity_known_parcel_count": zoned_r.get("zoned_capacity_known_parcel_count"),
+            "existing_zoned_capacity_total": zoned_r.get("zoned_capacity_total"),
+            "existing_zoned_headroom": zoned_r.get("baseline_capacity_gross"),
+            "existing_mm_headroom": zoned_r.get("mm_headroom"),
+            "existing_adu_headroom": zoned_r.get("adu_headroom"),
+            "adu_eligible_parcels": adu_r.get("eligible_parcel_count"),
+            "adu_gross_capacity": adu_r.get("eligible_parcel_count"),
+            "adu_feasible": adu_r.get("feasible"),
+            "adu_pct_affording": adu_r.get("pct_households_affording"),
+            "adu_excess_value_usd_at_fee50k": adu_r.get("excess_value_usd"),
+            "adu_winning_tenure": adu_r.get("winning_tenure"),
+            "mm_eligible_parcels": mm_r.get("eligible_parcel_count"),
+            "mm_gross_capacity": mm_r.get("additional_gross_capacity"),
+            "mm_feasible": mm_r.get("feasible"),
+            "mm_pct_affording": mm_r.get("pct_households_affording"),
+            "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
+            "mm_winning_tenure": mm_r.get("winning_tenure"),
+            "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
+            "median_home_value_usd": acs_r.get("median_home_value_usd"),
+            "median_gross_rent_usd": acs_r.get("median_gross_rent_usd"),
+            "pct_alt_mode_commute": acs_r.get("pct_alt_mode_commute"),
+            "population": acs_r.get("population"),
+            "commuters_excl_wfh": acs_r.get("commuters_excl_wfh"),
+            "density_per_sqmi": acs_r.get("density_per_sqmi"),
+            "area_land_sqmi": (feat["properties"].get("AREALAND") or 0) / 2_589_988.11,
+            "sales_median_price_per_sqft": sales_r.get("median_price_per_sqft"),
+            "sales_count_2026": sales_r.get("sales_count"),
+            "total_households": income_r.get("total_households"),
+            "income_brackets": {
+                col: income_r.get(col) for col, _, _ in bm.ACS_B19001_BRACKETS_FOR_MODEL
+            } if income_r else None,
+        }
+        geometry = feat["geometry"]
+        if shape is not None:
+            geometry = mapping(shape(geometry).simplify(0.0002, preserve_topology=True))
+        features.append({"type": "Feature", "geometry": geometry, "properties": props})
+
+    zori_by_county = {"hawaii": bm.HAWAII_COUNTYWIDE_ZORI_USD_PER_MONTH, "maui": bm.MAUI_COUNTYWIDE_ZORI_USD_PER_MONTH}
+
+    metadata = {
+        "default_absorption_rate": default_absorption_rate,
+        "absorption_rate_benchmark_detail": bm.absorption_rate_benchmark_detail(county),
+        "affordability_mortgage_rate": bm.HAWAII_MORTGAGE_RATE_30YR_FIXED,
+        "affordability_down_payment_pct": bm.HAWAII_MORTGAGE_DOWN_PAYMENT_PCT,
+        "affordability_income_share": bm.AFFORDABILITY_INCOME_SHARE,
+        "countywide_zori_usd_per_month": zori_by_county[county],
+        "zillow_timeseries": _zillow_timeseries_for_metadata(county),
+        "sales_monthly_trend": sales_monthly_trend,
+        "income_vs_affordable_stock": _income_vs_affordable_stock_for_metadata(county),
+        "countywide_sales_median_price_per_sqft": countywide_median_price_per_sqft,
+        "countywide_sales_count_2026": countywide_sales_count,
+        "mm_baseline_capacity_estimated_units_total": round(mm_baseline_tract["baseline_capacity_estimated_units"].sum(), 1),
+        "adu_affordability_adjusted_units_for_sale": round(adu_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "adu_affordability_adjusted_units_rental": round(adu_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "mm_affordability_adjusted_units_for_sale": round(mm_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "mm_affordability_adjusted_units_rental": round(mm_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "existing_conditions_summary": {
+            "total_parcel_count": int(zoned_capacity_tract["total_parcel_count"].sum()),
+            "residential_parcel_count": int(zoned_capacity_tract["residential_parcel_count"].sum()),
+            "existing_units_built": int(zoned_capacity_tract["existing_units_built"].sum()),
+            "zoned_capacity_known_parcel_count": int(zoned_capacity_tract["zoned_capacity_known_parcel_count"].sum()),
+            "zoned_capacity_total": int(zoned_capacity_tract["zoned_capacity_total"].sum()),
+            "zoned_headroom": int(zoned_capacity_tract["baseline_capacity_gross"].sum()),
+            "mm_headroom": int(zoned_capacity_tract["mm_headroom"].sum()),
+            "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
+        },
+        "data_status_note": (
+            f"Upgraded 2026-10-27: {COUNTY_LABELS[county]}'s ADU and Missing Middle capacity are now "
+            "feasibility- and affordability-gated, using the SAME OPSD 'Financial Analysis of TOD "
+            "Infrastructure Funding and Financing Options' report Kaua'i/Honolulu's pro formas come "
+            "from (it covers all 4 counties' TOD pilot areas, not just those two), scaled by this "
+            "county's own real sales comps, exactly as Kaua'i's tract_comps_ version already works. "
+            "TOD and Parking Reduction remain NOT modeled for this county -- no transit-stop layer or "
+            "parking-reform study exists yet -- so this entry still does not appear in the Scenario "
+            "Explorer's TOD/Parking views, only ADU and Missing Middle."
+        ),
+        "affordability_note": (
+            "Of the feasibility-adjusted units, pct_affording is the real share of that tract's own "
+            "households whose income clears the mortgage/rent bar for the comps-implied price "
+            "(for_sale-won tracts: 20% down, 7.000% 30-yr fixed, per ACS B19001; rental-won tracts: "
+            "countywide ZORI rent, per ACS B25118 renter-occupied households)."
+        ),
+    }
+    return features, metadata
+
+
 def main() -> None:
     kauai_features, kauai_meta = build_kauai_features()
     honolulu_features, honolulu_meta = build_honolulu_features()
-    hawaii_features, hawaii_meta = build_light_county_features("hawaii")
-    maui_features, maui_meta = build_light_county_features("maui")
+    hawaii_features, hawaii_meta = build_gated_county_features("hawaii")
+    maui_features, maui_meta = build_gated_county_features("maui")
 
     all_features = kauai_features + honolulu_features + hawaii_features + maui_features
     metadata = dict(kauai_meta)  # Scenario Explorer's existing top-level keys, unchanged, Kauai-scoped
@@ -930,11 +1142,11 @@ def main() -> None:
             **honolulu_meta,
             "scenarios_available": ["adu", "mm", "tod", "parking"],
         },
-        # Hawai'i County and Maui: Existing Conditions only (Baseline/MM/ADU,
-        # ungated) -- not added to the Scenario Explorer's default county set
-        # (index.html's state.scenarioCounties), since that view's TOD/
-        # parking/feasibility rendering assumes data these two counties
-        # don't have yet. See build_light_county_features()'s docstring.
+        # Hawai'i County and Maui: upgraded 2026-10-27 to a real feasibility/
+        # affordability-gated ADU + Missing Middle (build_gated_county_features()) --
+        # still no TOD or Parking Reduction, since neither county has a
+        # transit-stop layer or parking-reform study, so scenarios_available
+        # stays ["adu", "mm"] for both, same as before this upgrade.
         "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm"]},
         "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm"]},
     }
