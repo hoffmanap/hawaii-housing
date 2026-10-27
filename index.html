@@ -362,10 +362,12 @@
 <div class="panel" id="headline-panel" style="max-width:1500px;margin:16px auto 0;padding:16px 28px;display:none;">
   <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;justify-content:space-between;">
     <div>
-      <h2 style="margin:0 0 6px;">County <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(defaults to statewide)</span></h2>
+      <h2 style="margin:0 0 6px;">County <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(Kaua'i & Honolulu default on; Hawai'i County & Maui are ADU/Missing-Middle only, raw capacity -- see note)</span></h2>
       <fieldset id="scenario-county-fieldset" style="display:flex;gap:10px;">
         <label class="opt"><input type="checkbox" name="scenario-county" value="kauai" checked> Kaua'i</label>
         <label class="opt"><input type="checkbox" name="scenario-county" value="honolulu" checked> Honolulu (O'ahu)</label>
+        <label class="opt"><input type="checkbox" name="scenario-county" value="hawaii"> Hawai'i County</label>
+        <label class="opt"><input type="checkbox" name="scenario-county" value="maui"> Maui County</label>
       </fieldset>
     </div>
     <div>
@@ -378,10 +380,12 @@
     </div>
   </div>
   <p id="scenario-county-note" style="font-size:11.5px;color:var(--muted);margin:8px 0 0;display:none;">
-    This note is now unused for Honolulu -- it now runs through the same real feasibility
-    (development pro forma) and affordability pipeline Kaua'i does, using the Iwilei-Kapalama
-    O'ahu pro forma tract-scaled to each tract's own ACS median home value. See
-    <a href="docs/EXISTING_CONDITIONS.md" target="_blank">Existing Conditions</a>.
+    Hawai'i County and/or Maui County is selected: the view is locked to raw (ungated) capacity.
+    Neither county has a feasibility pro forma or affordability data yet (unlike Kaua'i/Honolulu),
+    so there is nothing to gate against. Their ADU and Missing Middle numbers are real, computed
+    from each county's own live parcel/zoning data; TOD and Parking show nothing for these two
+    counties specifically, since neither scenario has data for them at all. See
+    <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model & Assumptions</a>.
   </p>
 
   <h2 style="margin-top:16px;">Housing units created, by reform <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">— click a card to view that reform on the map</span></h2>
@@ -1247,6 +1251,7 @@ const COLORS = {
 
 let geoData = null;
 let map, geoLayer, barChart;
+let lastFitCountyKey = "kauai,honolulu"; // matches state.scenarioCounties' initial value -- see render()'s fitBounds call
 let defaultAbsorptionRate = 0.063;
 let defaultFeeUsd = 50000;
 // scenarioCounties defaults to EVERY built-out county (statewide), per the
@@ -1267,7 +1272,19 @@ const TOD_MODES_BY_COUNTY = { kauai: ["bus"], honolulu: ["bus", "rail"] };
 // Scenario gates (feasibility-adjusted, affordability-constrained) only
 // exist for Kauai so far -- see build_dashboard_data.py's
 // build_honolulu_features() docstring. Honolulu is gross-capacity only.
-const SCENARIO_GATES_BY_COUNTY = { kauai: true, honolulu: true };
+// Hawai'i County and Maui added 2026-10-27 (Existing Conditions already
+// had them; this is their Scenario Explorer wiring). Both are false --
+// neither has a feasibility pro forma or affordability data yet (see
+// build_light_county_features()'s docstring in build_dashboard_data.py),
+// so selecting either forces the view toggle to "raw" (ungated), same
+// mechanism already used here, not a new one. They also have no TOD or
+// Parking data at all (no tod_*/parking_* fields on their features) --
+// unitsFor()/displayValue() already return null for a missing field, the
+// same "skip, don't zero-fill" behavior any other missing-data tract
+// gets, so selecting ADU or Missing Middle with these two counties is
+// fully real; selecting TOD or Parking with ONLY these two checked will
+// correctly show nothing, not a fabricated zero.
+const SCENARIO_GATES_BY_COUNTY = { kauai: true, honolulu: true, hawaii: false, maui: false };
 
 // Groups tracts by real place name (tract_to_place_crosswalk(), a land-
 // area spatial join against Census Designated Place boundaries -- Hawaii
@@ -1426,12 +1443,18 @@ async function init() {
   });
   document.querySelectorAll('input[name="scenario-county"]').forEach(el => {
     el.addEventListener("change", () => {
-      // Checkboxes, not radios -- 0, 1, or both counties can be checked.
-      // Falls back to "all counties checked" if someone unchecks every
-      // box, rather than silently rendering nothing.
+      // Checkboxes, not radios -- any combination of the four counties
+      // can be checked. Falls back to the default county pair (Kaua'i +
+      // Honolulu) if someone unchecks every box, rather than silently
+      // rendering nothing -- and re-checks ONLY those two boxes in the
+      // UI, not all four, so the visible checkboxes always match
+      // state.scenarioCounties (a real bug when this fallback was
+      // written for exactly two checkboxes total, now a live one with
+      // four: checking every box visually while only two were actually
+      // in state would have been confusing).
       const checked = Array.from(document.querySelectorAll('input[name="scenario-county"]:checked')).map(i => i.value);
       if (checked.length === 0) {
-        document.querySelectorAll('input[name="scenario-county"]').forEach(i => { i.checked = true; });
+        document.querySelectorAll('input[name="scenario-county"]').forEach(i => { i.checked = (i.value === "kauai" || i.value === "honolulu"); });
         state.scenarioCounties = new Set(["kauai", "honolulu"]);
       } else {
         state.scenarioCounties = new Set(checked);
@@ -1652,6 +1675,21 @@ function render() {
     }
   }).addTo(map);
   window.__geoLayer = geoLayer; // scenario-explorer row-click lookup, see focusMapFeature()
+  // Re-fit the map to whatever's actually selected, but ONLY when the
+  // selected county SET changed (not on every slider drag / scenario
+  // switch, which would re-render far more often and make the map jump
+  // around constantly). Added 2026-10-27 alongside Hawai'i County/Maui:
+  // the map's default view (STATEWIDE_MAP_VIEW) is really a Kaua'i+O'ahu
+  // framing, so without this, checking Hawai'i County or Maui silently
+  // shows nothing on the map even though the data and stat cards are
+  // real -- the same kind of honest-but-invisible bug the project's own
+  // "skip, don't zero-fill" principle is meant to avoid on the data
+  // side; this is the map-side equivalent.
+  const currentCountyKey = selectedCounties.slice().sort().join(",");
+  if (currentCountyKey !== lastFitCountyKey && geoLayer.getLayers().length) {
+    map.fitBounds(geoLayer.getBounds().pad(0.08), { animate: false }); // no animation -- rapid checkbox toggles (e.g. unchecking two boxes in quick succession) could otherwise interrupt an in-flight pan/zoom and leave the map in a stale intermediate view
+    lastFitCountyKey = currentCountyKey;
+  }
 
   renderRamp(max);
   renderStats();
