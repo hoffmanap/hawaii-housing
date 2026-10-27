@@ -241,6 +241,62 @@ MONTHLY_GROUND_TRUTH = {
     "2026-08": (74, 26, 48877872.75),
     "2026-09": (78, 36, 50382901.69),
     "2025-01": (133, 145, 104252775.00),
+    # --- 2024 (full year, supplied 2026-10-27) ---
+    # All 10 of these months' own reports extracted cleanly via
+    # `pdftotext -raw` and are verified against each month's own printed
+    # recap-table row, read by hand. NOTE ON FIELD ORDER: these 2024
+    # reports' recap table lists, for each month, a standalone number on
+    # the line BEFORE the month name (this is the month's PERMIT count,
+    # i.e. the number of permit rows issued that month) followed by
+    # "<MonthName> <units> $<valuation>" on the next line. This was
+    # initially misread backwards (permits and units swapped) before
+    # being caught by cross-checking against this parser's own actual
+    # per-month record counts (which must equal the permit count) --
+    # e.g. January 2024's recap shows "130" then "January 71
+    # $60,766,432.88", and this parser genuinely extracts 130 permit
+    # ROWS for January with a units column summing to 71, confirming
+    # permits=130 (preceding line), units=71 (month-row value), not the
+    # reverse. All 10 entries below were derived and cross-checked this
+    # way, not assumed from the 2025/2026 months' table layout.
+    "2024-01": (130, 71, 60766432.88),
+    # 2024-02's own report footer prints valuation as $87,915,673.93; this
+    # parser's summed valuation differs by $2.07 on 89 records (permit and
+    # unit counts match exactly) -- the same kind of tiny source-PDF-text-
+    # extraction/rounding artifact documented for 2025-03/2026-05 above.
+    "2024-02": (89, 149, 87915673.93),
+    "2024-03": (119, 35, 42598659.00),
+    "2024-04": (90, 19, 46534717.00),
+    "2024-05": (113, 40, 41923250.51),
+    "2024-06": (117, 157, 63467373.00),
+    # 2024-07 and 2024-11 deliberately excluded from the parsed dataset:
+    # both supplied PDFs have NO ToUnicode CMap at all (pdffonts shows
+    # "uni: no" for both, vs. 2025-02's case of a CMap that exists but is
+    # corrupt) -- pdftotext extracts nothing usable from either, and a
+    # trial OCR pass (tesseract on 300dpi rasterized pages) recovered a
+    # much cleaner one-row-per-permit layout than 2025-02's attempt, but
+    # its own printed "TOTAL # PERMITS"/"TOTAL# UNITS" labels turned out
+    # to have the same permits/units field-order ambiguity as the main
+    # recap-table bug above, with no independent way from the OCR text
+    # alone to tell which label the OCR engine actually matched to which
+    # number (the position of the label text on the rendered page vs.
+    # the number is not reliably one-to-one after OCR). Rather than
+    # guess, this parser does not include record-level data for these
+    # two months at all. Their AGGREGATE monthly totals are, however,
+    # independently and reliably known from two different good months'
+    # own recap tables, cross-checked two ways (the recap row itself,
+    # and the arithmetic difference between consecutive OVERALL TOTAL
+    # cumulative figures) and are not derived from either broken PDF or
+    # its OCR: July 2024 = 85 permits, 31 units, $31,016,640.56 (from
+    # 2024-08's and 2024-09's recap tables, agreeing); November 2024 = 91
+    # permits, 85 units, $59,922,454.00 (from 2024-12's recap table).
+    # These two figures are reference-only (no permit-level records, so
+    # no TMK join and no ADU-keyword count are possible for these
+    # months) and are NOT in MONTHLY_GROUND_TRUTH since there is no
+    # parsed output to check them against.
+    "2024-08": (80, 40, 27697445.00),
+    "2024-09": (129, 68, 56694901.00),
+    "2024-10": (166, 126, 75828768.24),
+    "2024-12": (143, 259, 130094819.00),
     # 2025-02 deliberately excluded: that month's supplied PDF has a broken
     # text layer (embedded fonts with a corrupt ToUnicode CMap -- confirmed
     # via pdftotext -raw/-layout both returning empty text and pdffonts
@@ -250,6 +306,12 @@ MONTHLY_GROUND_TRUTH = {
     # produced an implausible aggregate (units summed to 1,296 against a
     # true total of 102) -- too unreliable to trust, so this month is
     # excluded from the dataset entirely rather than fed in corrupted.
+    # RE-PULLED 2026-10-27 at this project's request, in case the
+    # county's archive held a different export -- the new copy has the
+    # identical "Microsoft: Print To PDF" producer and the identical
+    # broken CMap (pdffonts: emb=yes, uni=yes, but pdftotext -raw/-layout
+    # both still return empty text). Same file, or at least the same
+    # underlying export defect; still unrecoverable, still excluded.
     # February's own report total, for reference, not used: (132, 102,
     # 47,670,991.70) -- note this also differs by 1 unit from the 103
     # December's cumulative recap shows for February, the same kind of
@@ -613,13 +675,13 @@ def main() -> None:
         print(f"  {month}: parsed {parsed} vs report {truth}  [{flag}]")
     if not all_match:
         print("\n  WARNING: at least one month did not reconcile exactly. As of 2026-10-27 the "
-              "only known cases are tiny valuation-only rounding gaps (2025-03: $1.03 on 109 "
-              "records; 2026-05: $2.70 on 68 records in one category), both verified by hand-"
-              "summing the raw extracted digit strings independently of this parser and getting "
-              "this same figure, pointing to the source PDF's own text extraction (not a parsing "
-              "bug). Permit counts and unit counts match exactly for every month. Any OTHER "
-              "mismatch, or any permit/unit-count mismatch, is new and should be investigated "
-              "before trusting this run.")
+              "only known cases are tiny valuation-only rounding gaps (2024-02: $2.07 on 89 "
+              "records; 2025-03: $1.03 on 109 records; 2026-05: $2.70 on 68 records in one "
+              "category), consistent with the source PDF's own text extraction (not a parsing "
+              "bug), as independently verified by hand-summing the raw extracted digit strings "
+              "for 2025-03 and 2026-05. Permit counts and unit counts match exactly for every "
+              "month. Any OTHER mismatch, or any permit/unit-count mismatch, is new and should "
+              "be investigated before trusting this run.")
 
     adu = joined[joined["is_likely_adu"]]
     print(f"\n{len(adu)} record(s) with ADU-suggestive description text (lower bound, not a permit-type field):")
