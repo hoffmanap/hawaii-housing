@@ -185,30 +185,35 @@
     box-shadow: 5px 5px 0 var(--ink);
     padding: 16px;
   }
-  /* Scenario Explorer: the county picker/headline reform cards and the
-     map are the things you need in view WHILE reading the longer
-     controls notes or scrolling the chart/table -- scrolling past them
-     used to just lose them off the top of the viewport. #headline-panel
-     pins to the very top of the scroll; #map-panel pins right below it
-     (offset is computed in JS from the headline panel's actual height,
-     since that height changes with the county selection and viewport
-     width). Both release naturally once the page scrolls past the
-     bottom of the Scenario Explorer grid (standard position:sticky
-     behavior -- a sticky item can't stick past its own container). Only
+  /* Scenario Explorer layout, reworked per direct feedback ("the map is
+     still not fitting on the screen and the scrollers move awkwardly in
+     relationship to the map"). Fixed-height three-pane model instead of
+     the old sticky-map-in-a-tall-row approach: all three columns
+     (#controls, #map-panel-cell, #scenario-chart-panel) get their own
+     independent scroll region, each capped to the remaining viewport
+     height below #headline-panel, so the map is ALWAYS fully visible at
+     the same scroll position as the controls and the table, instead of
+     the whole row growing to match whichever column has the longest
+     content and the map drifting out of sync as you scroll. #headline-
+     panel still pins to the very top. All three offsets/heights are
+     computed in JS (syncStickyMapOffset) since #headline-panel's real
+     height changes with the county selection and viewport width. Only
      applies above the 1100px breakpoint where the 3-column grid is
-     actually side-by-side; below that everything already stacks in one
-     column and there's nothing to pin against. */
+     actually side-by-side; below that everything stacks in one column
+     and a fixed scroll region would just hide content, so each column
+     scrolls with the page instead. */
   @media (min-width: 1101px) {
+    .layout#scenario-tab { align-items: start; }
     #headline-panel { position: sticky; top: 0; z-index: 10; }
-    /* #map-panel-cell is the actual grid item, and CSS Grid's default
-       align-items:stretch makes it as tall as the row (i.e. as tall as
-       the longest column). #map-panel, the visual box with the border
-       and the map in it, is its child and keeps its own natural
-       (short) height -- that height difference is what gives
-       position:sticky room to actually stick, rather than sticking an
-       element to a container of the exact same size, which has no
-       effect. */
-    #map-panel { position: sticky; z-index: 5; }
+    #controls, #map-panel-cell, #scenario-chart-panel {
+      position: sticky;
+      overflow-y: auto;
+      /* top and max-height are set inline by syncStickyMapOffset() */
+    }
+    /* The map itself never needs to scroll internally -- it already
+       sizes to min(560px, 62vh) -- but the long notes/details beneath
+       it in #controls, and the table beneath the chart in
+       #scenario-chart-panel, do. */
   }
   .panel h2 {
     margin: 0 0 12px;
@@ -255,6 +260,26 @@
      viewport instead of always claiming the same height regardless of
      how much is actually available. */
   #map { height: min(560px, 62vh); border: 2px solid var(--ink); }
+  /* Multi-select scenario buttons physically on the map panel, per
+     direct request ("scenario on the map is a series of buttons...
+     we should be able to mix and match"). Replaces the old single-
+     select radio fieldset in #controls; these drive the exact same
+     state.reformInclude/showParkingOnMap as the headline checkboxes
+     and the reform-compare cards (see render()'s sync block), so all
+     three controls always agree. */
+  .map-scenario-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .map-scenario-btn {
+    border: 2px solid var(--ink);
+    background: var(--paper);
+    padding: 6px 12px;
+    font-family: "Archivo", sans-serif;
+    font-size: 12.5px;
+    font-weight: 650;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .map-scenario-btn:hover { background: var(--yellow); }
+  .map-scenario-btn.active { background: var(--ink); color: var(--paper); }
   /* Kills the browser's own default focus-ring outline on a clicked SVG
      path (Leaflet's vector layers are focusable by default), which
      renders as a plain rectangle around the shape's BOUNDING BOX, not
@@ -286,6 +311,32 @@
   .stat .label { font-size: 11.5px; color: var(--muted); }
   .stat .value { font-size: 22px; font-weight: 700; margin-top: 2px; font-family: "Archivo Black", sans-serif; }
   .stat.gap .value { color: var(--coral); }
+  /* "Totals, selected counties" funnel: capacity -> feasible ->
+     affordable, read top to bottom as a sequence of losses, not a grid
+     of unrelated cards. Each step's note states the loss in plain
+     words so the number is never read alone. */
+  .funnel { display: flex; flex-direction: column; gap: 0; }
+  .funnel-step {
+    background: var(--paper);
+    border: 2px solid var(--ink);
+    padding: 10px 12px;
+  }
+  .funnel-step.current { border-color: var(--accent, #14110b); box-shadow: 3px 3px 0 var(--ink); }
+  .funnel-value { font-size: 26px; font-weight: 700; font-family: "Archivo Black", sans-serif; line-height: 1.1; }
+  .funnel-label { font-size: 12px; font-weight: 650; color: var(--ink); margin-top: 1px; }
+  .funnel-note { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  .funnel-arrow {
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--coral);
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .funnel-arrow span { font-size: 12px; }
   /* Compact variant for #headline-panel's reform-comparison cards -- that
      panel sits above the 3-column Scenario Explorer grid and, at a
      common 1440x900 laptop viewport, was eating ~360px of vertical space
@@ -454,7 +505,7 @@
     </div>
   </div>
 
-  <h2 style="margin-top:12px;margin-bottom:6px;">Housing units created, by reform <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(click a card to see it on the map)</span></h2>
+  <h2 style="margin-top:12px;margin-bottom:6px;">Housing units created, by reform <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(click a card to check or uncheck it on the map)</span></h2>
   <div class="stat-grid" id="reform-compare-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:4px;"></div>
   <details style="font-size:11px;color:var(--muted);">
     <summary style="cursor:pointer;font-weight:600;">Why the combined card isn't just the other four added up</summary>
@@ -475,14 +526,6 @@
   <div class="panel" id="controls">
     <h2 style="margin-top:0;">Totals, selected counties</h2>
     <div class="stat-grid" id="stat-grid"></div>
-
-    <h2>Scenario shown on the map</h2>
-    <fieldset id="scenario-fieldset">
-      <label class="opt"><input type="radio" name="scenario" value="adu" checked> ADU (accessory dwelling units)</label>
-      <label class="opt"><input type="radio" name="scenario" value="mm"> Missing Middle (2–6 units)</label>
-      <label class="opt"><input type="radio" name="scenario" value="tod"> Transit-Oriented Density</label>
-      <label class="opt"><input type="radio" name="scenario" value="parking"> Parking Requirement Reduction</label>
-    </fieldset>
 
     <h2>View</h2>
     <div class="toggle-row" id="view-toggle">
@@ -609,12 +652,18 @@
 
   <div id="map-panel-cell">
     <div class="panel" id="map-panel">
-      <h2>Tract map</h2>
+      <h2>Tract map <span style="font-weight:normal;font-size:11px;color:var(--muted);">(mix and match &mdash; checked reforms sum together)</span></h2>
+      <div class="map-scenario-row" id="map-scenario-row">
+        <button type="button" class="map-scenario-btn" data-key="adu">ADU</button>
+        <button type="button" class="map-scenario-btn" data-key="mm">Missing Middle</button>
+        <button type="button" class="map-scenario-btn" data-key="tod">TOD</button>
+        <button type="button" class="map-scenario-btn" data-key="parking">Parking</button>
+      </div>
       <div id="map"></div>
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="scenario-chart-panel">
     <div class="toggle-row" id="geo-toggle-scenario" style="margin-bottom:10px;">
       <button data-geo="tract">By tract</button>
       <button data-geo="place" class="active">By place</button>
@@ -1550,10 +1599,28 @@ let pendingMapFit = true;
 // 1101px breakpoint where neither panel is sticky (see CSS).
 function syncStickyMapOffset() {
   const hp = document.getElementById("headline-panel");
-  const mp = document.getElementById("map-panel");
-  if (!hp || !mp) return;
+  const mapCell = document.getElementById("map-panel-cell");
+  if (!hp || !mapCell) return;
   const hpVisible = hp.style.display !== "none" && hp.offsetParent !== null;
-  mp.style.top = (hpVisible ? hp.getBoundingClientRect().height : 0) + 12 + "px";
+  const top = (hpVisible ? hp.getBoundingClientRect().height : 0) + 12;
+  // All three Scenario Explorer columns get the same sticky top offset.
+  // The map column keeps its OWN natural height (h2 + scenario buttons
+  // + the map, which already caps itself at min(560px, 62vh)) -- the
+  // map must never be the one that gets clipped, since "I can't
+  // reasonably see the whole map" was the direct complaint. The other
+  // two columns (controls, chart/table) are capped to THAT height
+  // instead and scroll internally if their own content runs longer,
+  // so all three stay visually aligned without the map ever shrinking
+  // to fit a row height set by someone else's content.
+  mapCell.style.top = top + "px";
+  mapCell.style.maxHeight = "";
+  const mapCellHeight = mapCell.getBoundingClientRect().height;
+  ["controls", "scenario-chart-panel"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.top = top + "px";
+    el.style.maxHeight = mapCellHeight + "px";
+  });
 }
 window.addEventListener("resize", syncStickyMapOffset);
 let defaultAbsorptionRate = 0.063;
@@ -1566,7 +1633,16 @@ let defaultFeeUsd = 50000;
 // i'd default to place before tracts. tracts are pretty useless") -- and
 // reformInclude is which reforms count toward the "combined" headline
 // card, independent of which single scenario is shown on the map.
-let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu", "hawaii", "maui"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all", reformInclude: new Set(["adu", "mm", "tod"]) };
+let state = { view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu", "hawaii", "maui"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all",
+  // Which reforms are shown on the map/totals, all at once -- mix and
+  // match, not a single radio pick. ADU/Missing Middle/TOD are UNITS
+  // reforms and their map color is their SUM (see displayValue()) --
+  // the same three keys drive the "combined" headline card, so the map
+  // and that card can never show a different number for the same
+  // selection. Parking is tracked separately (showParkingOnMap) since
+  // its own metric is sqft, not units, and was never part of the
+  // combined-units total (see run_parking_reduction_scenario()).
+  reformInclude: new Set(["adu", "mm", "tod"]), showParkingOnMap: false };
 const COUNTY_MAP_VIEW = { kauai: [22.0, -159.55, 10.2], honolulu: [21.47, -157.98, 10.8], hawaii: [19.6, -155.5, 9.1], maui: [20.8, -156.4, 9.6] };
 const STATEWIDE_MAP_VIEW = [21.6, -158.6, 8.3];
 // Which real transit modes each county has data for -- Kauai has no
@@ -1634,7 +1710,7 @@ const SCENARIOS = {
 // the Scenario Explorer can show more than one county's features at
 // once -- a Kauai feature and a Honolulu feature in the same render
 // need different TOD field names even under the same scenario/mode.
-function effectiveCfg(county, scenario = state.scenario) {
+function effectiveCfg(county, scenario) {
   const cfg = SCENARIOS[scenario];
   if (scenario !== "tod" || county !== "honolulu") return cfg;
   const prefix = state.todMode === "rail" ? "tod_rail_" : "tod_bus_";
@@ -1753,12 +1829,20 @@ async function init() {
     });
   });
 
-  document.querySelectorAll('input[name="scenario"]').forEach(el => {
-    el.addEventListener("change", e => {
-      state.scenario = e.target.value;
-      if (!SCENARIOS[state.scenario].isUnits) {
-        state.view = "raw"; // Parking has no feasibility-adjusted number -- see run_parking_reduction_scenario.
+  // Map scenario buttons live physically on the map panel now (mix-and-
+  // match, not a single radio) -- see the .map-scenario-btn listener
+  // below and the reform-include listener, which both drive the same
+  // state.reformInclude/showParkingOnMap that used to be state.scenario.
+  document.querySelectorAll('.map-scenario-btn').forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.key;
+      if (key === "parking") {
+        state.showParkingOnMap = !state.showParkingOnMap;
+      } else {
+        if (state.reformInclude.has(key)) state.reformInclude.delete(key);
+        else state.reformInclude.add(key);
       }
+      if (!activeUnitScenarios().length) state.view = "raw"; // no feasibility-adjusted number with nothing selected
       render();
     });
   });
@@ -1796,7 +1880,7 @@ async function init() {
   });
   document.querySelectorAll('#view-toggle button').forEach(btn => {
     btn.addEventListener("click", () => {
-      if (!SCENARIOS[state.scenario].isUnits) return; // disabled for Parking
+      if (!activeUnitScenarios().length) return; // disabled when no unit reform is checked
       document.querySelectorAll('#view-toggle button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.view = btn.dataset.view;
@@ -1833,7 +1917,8 @@ async function init() {
   document.querySelectorAll('input[name="reform-include"]').forEach(el => {
     el.addEventListener("change", () => {
       state.reformInclude = new Set(Array.from(document.querySelectorAll('input[name="reform-include"]:checked')).map(i => i.value));
-      renderReformCompare();
+      if (!activeUnitScenarios().length) state.view = "raw";
+      render(); // these checkboxes now drive the map too, not just the combined-total card
     });
   });
   document.getElementById("conditions-table-county-filter").addEventListener("change", e => {
@@ -1864,27 +1949,78 @@ function unitsFor(props, cfg) {
   return gross * state.absorptionRate;
 }
 
-function displayValue(feat) {
-  const cfg = effectiveCfg(feat.properties.county);
-  if (!cfg.isUnits) return feat.properties.parking_land_consumed_sqft;
-  const raw = unitsFor(feat.properties, cfg);
-  if (raw == null) return null;
-  if (state.view === "raw") return raw;
-  const feasible = feasibleAt(feat.properties, cfg);
-  const feasibilityAdjusted = feasible === false ? 0 : raw;
-  if (state.view === "feasible") return feasibilityAdjusted;
-  // "affordable": of the feasibility-adjusted units, scale by the real
-  // share of the TRACT'S OWN households whose income clears the
-  // mortgage/rent bar for the comps-implied price -- a demand-side
-  // ceiling stacked on top of feasibility, not a replacement for it.
-  const pctAffording = cfg.pctAffording ? feat.properties[cfg.pctAffording] : null;
-  if (pctAffording == null) return feasibilityAdjusted;
-  return feasibilityAdjusted * (pctAffording / 100);
+// Which unit reforms (of ADU/Missing Middle/TOD) are currently checked --
+// the single list that the map, the funnel totals, the reform-compare
+// cards, and the table all read, so none of them can ever disagree about
+// what's "currently selected."
+function activeUnitScenarios() {
+  return ["adu", "mm", "tod"].filter(k => state.reformInclude.has(k));
 }
 
+// A tract's single plain-language metric label for whatever combination
+// is currently active -- units (and which view) if any unit reform is
+// checked, parking sqft if only Parking is checked, or a clear "nothing
+// selected" fallback rather than silently showing stale data.
+function currentMetricLabel() {
+  if (activeUnitScenarios().length) {
+    const viewLabels = { raw: "zoning capacity", feasible: "feasibility-adjusted", affordable: "affordability-constrained" };
+    return `Units (${viewLabels[state.view]})`;
+  }
+  if (state.showParkingOnMap) return "Parking land freed (sqft)";
+  return "No scenario selected";
+}
+
+// A single tract's displayed value: the SUM of every currently-checked
+// unit reform's own units at this tract (same per-reform math
+// scenarioTotals() uses, just per-feature instead of summed countywide),
+// so a tract checked for ADU+Missing Middle shows what those two reforms
+// would ACTUALLY add together at that one parcel-set, not two separate
+// numbers you have to add yourself. If no unit reform is checked but
+// Parking is, falls back to the parking sqft layer instead -- the two
+// metrics are never added together, since one is units and the other is
+// land area.
+function displayValue(feat) {
+  const county = feat.properties.county;
+  const units = activeUnitScenarios();
+  if (units.length) {
+    let total = 0, any = false;
+    units.forEach(key => {
+      const cfg = effectiveCfg(county, key);
+      const raw = unitsFor(feat.properties, cfg);
+      if (raw == null) return;
+      any = true;
+      let v = raw;
+      if (state.view !== "raw") {
+        const feasible = feasibleAt(feat.properties, cfg);
+        v = feasible === false ? 0 : raw;
+        if (state.view === "affordable") {
+          const pctAffording = cfg.pctAffording ? feat.properties[cfg.pctAffording] : null;
+          if (pctAffording != null) v = v * (pctAffording / 100);
+        }
+      }
+      total += v;
+    });
+    if (any) return total;
+  }
+  if (state.showParkingOnMap) return feat.properties.parking_land_consumed_sqft;
+  return null;
+}
+
+// A tract counts as feasible (solid border) if AT LEAST ONE currently-
+// checked unit reform is feasible there -- "this tract has SOME real way
+// to add units," not "every checked reform happens to pencil." Returns
+// null (no border treatment at all) when no unit reform is checked.
 function feasibleOf(feat) {
-  const cfg = effectiveCfg(feat.properties.county);
-  return cfg.feasible ? feasibleAt(feat.properties, cfg) : null;
+  const county = feat.properties.county;
+  const units = activeUnitScenarios();
+  if (!units.length) return null;
+  const verdicts = units
+    .map(key => effectiveCfg(county, key))
+    .filter(cfg => cfg.feasible)
+    .map(cfg => feasibleAt(feat.properties, cfg))
+    .filter(v => v != null);
+  if (!verdicts.length) return null;
+  return verdicts.some(v => v === true);
 }
 
 function colorScale(value, max) {
@@ -1908,22 +2044,31 @@ function scenarioFeatureCollection() {
 }
 
 function render() {
-  const cfg = effectiveCfg(); // generic cfg (isUnits/metricLabel) -- county-independent except TOD field names, handled per-feature below
-  document.getElementById("parking-note").style.display = state.scenario === "parking" ? "block" : "none";
-  document.getElementById("tod-note").style.display = state.scenario === "tod" ? "block" : "none";
+  const unitsActive = activeUnitScenarios();
+  document.getElementById("parking-note").style.display = state.showParkingOnMap ? "block" : "none";
+  document.getElementById("tod-note").style.display = unitsActive.includes("tod") ? "block" : "none";
   // Union of TOD modes available across every CURRENTLY SELECTED county --
   // e.g. with both counties checked, rail still shows (Honolulu has it),
   // even though Kauai features simply contribute 0 under rail mode.
   const selectedCounties = Array.from(state.scenarioCounties);
   const todModes = Array.from(new Set(selectedCounties.flatMap(c => TOD_MODES_BY_COUNTY[c] || ["bus"])));
-  document.getElementById("tod-mode-control").style.display = state.scenario === "tod" ? "block" : "none";
+  document.getElementById("tod-mode-control").style.display = unitsActive.includes("tod") ? "block" : "none";
   document.getElementById("tod-mode-rail-label").style.display = todModes.includes("rail") ? "" : "none";
-  if (state.scenario === "tod" && !todModes.includes(state.todMode)) {
+  if (unitsActive.includes("tod") && !todModes.includes(state.todMode)) {
     state.todMode = "bus";
     document.querySelectorAll('input[name="tod-mode"]').forEach(el => { el.checked = el.value === "bus"; });
   }
   const gated = selectedCounties.every(c => SCENARIO_GATES_BY_COUNTY[c]);
-  document.querySelectorAll('#view-toggle button').forEach(b => b.disabled = !cfg.isUnits || !gated);
+  document.querySelectorAll('#view-toggle button').forEach(b => b.disabled = !unitsActive.length || !gated);
+  // Keep the map's own scenario buttons AND the headline panel's "count
+  // toward combined total" checkboxes showing the exact same selection,
+  // however it was last changed (either control can drive it).
+  document.querySelectorAll('.map-scenario-btn').forEach(btn => {
+    const key = btn.dataset.key;
+    const active = key === "parking" ? state.showParkingOnMap : state.reformInclude.has(key);
+    btn.classList.toggle("active", active);
+  });
+  document.querySelectorAll('input[name="reform-include"]').forEach(el => { el.checked = state.reformInclude.has(el.value); });
 
   const scenarioGeo = scenarioFeatureCollection();
   const values = scenarioGeo.features.map(displayValue).filter(v => v != null);
@@ -1960,20 +2105,25 @@ function render() {
     onEachFeature: (feat, layer) => {
       layer.options.__baseStyle = baseStyleFor(feat); // used to reset a temporary place-level highlight flash, see focusMapFeature()
       const p = feat.properties;
-      const featCfg = effectiveCfg(p.county); // per-feature, so a mixed Kauai+Honolulu TOD render reads each one's own real field names
       const v = displayValue(feat);
       const feas = feasibleOf(feat);
-      const viewLabels = { raw: 'zoning capacity', feasible: 'feasibility-adjusted', affordable: 'affordability-constrained' };
-      const metricLabel = featCfg.isUnits
-        ? `Units (${viewLabels[state.view]})`
-        : 'Parking land freed (sqft)';
-      const pctAffording = featCfg.pctAffording ? p[featCfg.pctAffording] : null;
+      const metricLabel = currentMetricLabel();
+      const labelFor = { adu: 'ADU', mm: 'Missing Middle', tod: 'TOD' };
+      // Multiple reforms can be checked at once now, so the popup breaks
+      // each one out by name rather than naming just one "the scenario".
+      const perReform = activeUnitScenarios().map(key => {
+        const rcfg = effectiveCfg(p.county, key);
+        const raw = unitsFor(p, rcfg);
+        if (raw == null) return null;
+        const rfeas = rcfg.feasible ? feasibleAt(p, rcfg) : null;
+        return `${labelFor[key]}: ${Math.round(raw).toLocaleString()} units` + (rfeas != null ? ` (feasible: ${rfeas ? 'Yes' : 'No'})` : '');
+      }).filter(Boolean);
       layer.bindPopup(
         `<b>${p.name.replace(/; .+ County; Hawaii$/, '')}</b><br>` +
-        `Eligible parcels: ${p[featCfg.eligible] ?? '—'}<br>` +
-        `${metricLabel}: ${v != null ? Math.round(v).toLocaleString() : '—'}<br>` +
-        (featCfg.feasible ? `Feasible at scaled sale price: ${feas === true ? 'Yes' : feas === false ? 'No' : '—'}<br>` : '') +
-        (pctAffording != null ? `Households affording: ${Math.round(pctAffording)}%<br>` : '') +
+        (perReform.length ? perReform.join('<br>') + '<br>' : '') +
+        `Combined ${metricLabel.toLowerCase()}: ${v != null ? Math.round(v).toLocaleString() : '—'}<br>` +
+        (activeUnitScenarios().length ? `Feasible under at least one checked reform: ${feas === true ? 'Yes' : feas === false ? 'No' : '—'}<br>` : '') +
+        (state.showParkingOnMap ? `Parking land freed: ${p.parking_land_consumed_sqft != null ? Math.round(p.parking_land_consumed_sqft).toLocaleString() + ' sqft' : '—'}<br>` : '') +
         `Median home value: ${p.median_home_value_usd ? '$' + p.median_home_value_usd.toLocaleString() : '—'}`
       );
       layer.on("click", () => {
@@ -2092,8 +2242,13 @@ function renderReformCompare() {
   // Whole units, per direct instruction ("numbers shouldn't have decimal
   // points... these are housing units, after all").
   const fmt = n => Math.round(n).toLocaleString();
+  // Click toggles this reform in/out of the SAME combined selection the
+  // map buttons and the "count toward combined total" checkboxes drive
+  // -- one state.reformInclude/showParkingOnMap, three controls. The
+  // outline marks which reforms are currently checked (not a single
+  // "shown on map" pick, since several can be checked at once).
   grid.innerHTML = unitScenarios.map(key => `
-    <div class="stat reform-card" data-scenario="${key}" style="cursor:pointer;${state.scenario === key ? 'outline:2px solid var(--accent);' : ''}">
+    <div class="stat reform-card" data-scenario="${key}" style="cursor:pointer;${state.reformInclude.has(key) ? 'outline:2px solid var(--accent);' : ''}">
       <div class="label">${labelFor[key]} (${viewLabel})</div><div class="value">${fmt(totalsByScenario[key][viewKey])}</div>
     </div>
   `).join("") + `
@@ -2101,54 +2256,85 @@ function renderReformCompare() {
       <div class="label">${combinedLabel} — ceiling, not additive-in-reality; see note</div>
       <div class="value">${fmt(combined)}</div>
     </div>
-    <div class="stat reform-card" data-scenario="parking" style="cursor:pointer;${state.scenario === 'parking' ? 'outline:2px solid var(--accent);' : ''}">
+    <div class="stat reform-card" data-scenario="parking" style="cursor:pointer;${state.showParkingOnMap ? 'outline:2px solid var(--accent);' : ''}">
       <div class="label">Parking: land freed, sqft (not units)</div><div class="value">${parkingTotals.totalSqft.toLocaleString()}</div>
     </div>
   `;
   grid.querySelectorAll('.reform-card').forEach(card => {
     card.addEventListener('click', () => {
       const key = card.dataset.scenario;
-      state.scenario = key;
-      document.querySelectorAll('input[name="scenario"]').forEach(el => { el.checked = el.value === key; });
-      if (!SCENARIOS[key].isUnits) state.view = "raw";
+      if (key === "parking") {
+        state.showParkingOnMap = !state.showParkingOnMap;
+      } else {
+        if (state.reformInclude.has(key)) state.reformInclude.delete(key); else state.reformInclude.add(key);
+      }
+      if (!activeUnitScenarios().length) state.view = "raw";
       render();
     });
   });
 }
 
+// "Totals, selected counties" -- per direct feedback ("this box is
+// confusing"), reworked from a flat grid of 5 same-sized cards into a
+// funnel: capacity -> feasible -> affordable, each step a big number
+// with one plain sentence underneath saying what fraction of the
+// PREVIOUS step it lost and why. Reuses scenarioTotals() summed across
+// activeUnitScenarios() -- the SAME combination math the map and the
+// reform-compare "combined" card use -- so this box can never show a
+// different number than the map for the same selection.
 function renderStats() {
-  const cfg = SCENARIOS[state.scenario];
   const grid = document.getElementById("stat-grid");
-
   const scenarioFeats = scenarioFeatureCollection().features;
-  const totals = scenarioTotals(scenarioFeats, state.scenario);
-  if (!totals.isUnits) {
+  const units = activeUnitScenarios();
+
+  if (!units.length) {
+    if (!state.showParkingOnMap) {
+      grid.innerHTML = `<div class="stat gap" style="grid-column:1/-1;"><div class="label">No reform selected</div>
+        <div class="value" style="font-size:15px;">Check a reform on the map or above to see totals.</div></div>`;
+      return;
+    }
+    const parkingTotals = scenarioTotals(scenarioFeats, "parking");
     grid.innerHTML = `
-      <div class="stat"><div class="label">Eligible parcels</div><div class="value">${totals.totalParcels}</div></div>
-      <div class="stat"><div class="label">Parking land freed, sqft</div><div class="value">${totals.totalSqft.toLocaleString()}</div></div>
+      <div class="stat"><div class="label">Eligible parcels</div><div class="value">${parkingTotals.totalParcels}</div></div>
+      <div class="stat"><div class="label">Parking land freed, sqft</div><div class="value">${parkingTotals.totalSqft.toLocaleString()}</div></div>
     `;
     return;
   }
 
-  const { totalRaw, totalFeasible, totalAffordable } = totals;
+  const combined = units.reduce((acc, key) => {
+    const t = scenarioTotals(scenarioFeats, key);
+    acc.totalRaw += t.totalRaw; acc.totalFeasible += t.totalFeasible; acc.totalAffordable += t.totalAffordable;
+    return acc;
+  }, { totalRaw: 0, totalFeasible: 0, totalAffordable: 0 });
+  const { totalRaw, totalFeasible, totalAffordable } = combined;
   const gap = totalRaw - totalFeasible;
-  const pctGap = totalRaw > 0 ? (100 * gap / totalRaw).toFixed(0) : 0;
+  const pctGap = totalRaw > 0 ? Math.round(100 * gap / totalRaw) : 0;
   const affordabilityGap = totalFeasible - totalAffordable;
-  const pctAffordabilityGap = totalFeasible > 0 ? (100 * affordabilityGap / totalFeasible).toFixed(0) : 0;
-  const activeView = state.view;
-
+  const pctAffordabilityGap = totalFeasible > 0 ? Math.round(100 * affordabilityGap / totalFeasible) : 0;
   const fmt = n => Math.round(n).toLocaleString();
+  const labelFor = { adu: "ADU", mm: "Missing Middle", tod: "TOD" };
+  const whichLabel = units.length === 3 ? "all three unit reforms" : units.map(k => labelFor[k]).join(" + ");
+
   grid.innerHTML = `
-    <div class="stat" style="${activeView === 'raw' ? 'outline:2px solid var(--accent);' : ''}">
-      <div class="label">Zoning capacity</div><div class="value">${fmt(totalRaw)}</div></div>
-    <div class="stat" style="${activeView === 'feasible' ? 'outline:2px solid var(--accent);' : ''}">
-      <div class="label">Feasibility-adjusted</div><div class="value">${fmt(totalFeasible)}</div></div>
-    <div class="stat" style="${activeView === 'affordable' ? 'outline:2px solid var(--accent);' : ''}">
-      <div class="label">Affordability-constrained</div><div class="value">${fmt(totalAffordable)}</div></div>
-    <div class="stat gap"><div class="label">Gap closed by feasibility gate</div>
-      <div class="value">${fmt(gap)} units (${pctGap}%)</div></div>
-    <div class="stat gap" style="grid-column: span 2;"><div class="label">Of what's feasible, gap closed because local households can't afford it</div>
-      <div class="value">${fmt(affordabilityGap)} units (${pctAffordabilityGap}%)</div></div>
+    <div class="funnel">
+      <div class="funnel-step ${state.view === 'raw' ? 'current' : ''}">
+        <div class="funnel-value">${fmt(totalRaw)}</div>
+        <div class="funnel-label">Zoning capacity</div>
+        <div class="funnel-note">What ${whichLabel} legally allows on top of what's already built, before asking if anyone would build it.</div>
+      </div>
+      <div class="funnel-arrow">&darr;<span>&minus;${pctGap}%</span></div>
+      <div class="funnel-step ${state.view === 'feasible' ? 'current' : ''}">
+        <div class="funnel-value">${fmt(totalFeasible)}</div>
+        <div class="funnel-label">Feasible to build</div>
+        <div class="funnel-note">${fmt(gap)} of those units (${pctGap}%) don't clear the development pro forma: cost to build exceeds what the unit would sell or rent for here.</div>
+      </div>
+      <div class="funnel-arrow">&darr;<span>&minus;${pctAffordabilityGap}%</span></div>
+      <div class="funnel-step ${state.view === 'affordable' ? 'current' : ''}">
+        <div class="funnel-value">${fmt(totalAffordable)}</div>
+        <div class="funnel-label">Affordable to local households</div>
+        <div class="funnel-note">Of what's feasible, ${fmt(affordabilityGap)} units (${pctAffordabilityGap}%) still cost more than the area's own households could qualify for.</div>
+      </div>
+    </div>
   `;
 }
 
@@ -2177,13 +2363,14 @@ function focusMapFeature(geoids) {
 }
 
 function renderBarAndTable() {
-  const cfg = effectiveCfg();
-  const feasField = cfg.feasible;
+  const metricLabel = currentMetricLabel();
+  const units = activeUnitScenarios();
+  const feasField = units.length > 0; // every unit reform (ADU/MM/TOD) has a feasibility test; Parking alone does not
   const fmt = n => Math.round(n).toLocaleString(); // whole units -- see direct instruction, no decimals
 
   document.getElementById("topunits-th1").textContent = state.geo === "place" ? "Place" : "Tract";
-  document.getElementById("topunits-th2").textContent = cfg.metricLabel;
-  document.getElementById("topunits-th3").textContent = cfg.feasible ? "Feasible?" : "";
+  document.getElementById("topunits-th2").textContent = metricLabel;
+  document.getElementById("topunits-th3").textContent = feasField ? "Feasible?" : "";
   document.getElementById("feasibility-explainer").style.display = "none";
 
   const scenarioFeats = scenarioFeatureCollection().features;
@@ -2195,7 +2382,7 @@ function renderBarAndTable() {
       const v = values.length ? values.reduce((a, b) => a + b, 0) : null;
       let feas = null, pctFeasible = null;
       if (feasField) {
-        const verdicts = feats.map(f => feasibleAt(f.properties, effectiveCfg(f.properties.county))).filter(x => x != null);
+        const verdicts = feats.map(f => feasibleOf(f)).filter(x => x != null);
         feas = verdicts.length === 0 ? null
           : verdicts.every(x => x === true) ? true
           : verdicts.every(x => x === false) ? false
@@ -2207,7 +2394,7 @@ function renderBarAndTable() {
   } else {
     rows = scenarioFeats.map(f => ({
       name: shortName(f.properties), v: displayValue(f),
-      feas: feasField ? feasibleAt(f.properties, effectiveCfg(f.properties.county)) : null,
+      feas: feasField ? feasibleOf(f) : null,
       pctFeasible: null, geoids: [f.properties.GEOID], n: 1
     })).filter(r => r.v != null);
   }
@@ -2218,8 +2405,8 @@ function renderBarAndTable() {
   if (rows.length) {
     const top = rows[0];
     document.getElementById("barchart-headline").textContent = rows.length > 1
-      ? `${top.name} leads, with ${fmt(top.v)} ${cfg.metricLabel.toLowerCase()}`
-      : `${top.name}: ${fmt(top.v)} ${cfg.metricLabel.toLowerCase()}`;
+      ? `${top.name} leads, with ${fmt(top.v)} ${metricLabel.toLowerCase()}`
+      : `${top.name}: ${fmt(top.v)} ${metricLabel.toLowerCase()}`;
     document.getElementById("barchart-deck").textContent =
       `Chart shows the top 10 of ${rows.length} ${geoWord}s with a nonzero value; every one is in the scrollable list below. Current scenario/view/county.` +
       (feasField ? " Red bars failed the feasibility test." : "");
