@@ -630,12 +630,14 @@
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Construction costs aren't one statewide number — Kaua'i vs. Honolulu</p>
+          <p class="chart-headline">Construction costs aren't one statewide number — all 4 counties compared</p>
           <p class="chart-deck">The same feasibility-gate cost build-up, run for the same product (a 840
-          GSF low-rise for-sale unit — the one typology the source table prices for both sites) on each
-          county's own real, separately-sourced submarket figures: Kaua'i's Lihu'e Town Core column and
-          Honolulu's Iwilei-Kapalama column, same OPSD Real Estate Assumptions table. Land cost is the
-          biggest gap by far — Honolulu's urban TOD-corridor land comps run roughly 6x Lihu'e's.</p>
+          GSF low-rise for-sale unit — the one typology the source table prices for all 4 TOD sites) on
+          each county's own real, separately-sourced submarket figures: Kaua'i's Lihu'e Town Core,
+          Honolulu's Iwilei-Kapalama, Maui's Ka'ahumanu Avenue Community Corridor, and Hawai'i County's
+          Ane Keohokalole Highway Corridor columns, all from the same OPSD Real Estate Assumptions table.
+          Land cost is the biggest gap by far — Honolulu's urban TOD-corridor land comps run roughly 6x
+          Lihu'e's and over 40x the Ane Keohokalole corridor's.</p>
         </div>
         <canvas id="costProFormaChart" height="110"></canvas>
       </div>
@@ -643,10 +645,11 @@
         <p class="stat-line" id="cost-proforma-stat"></p>
         <p class="stat-line"><strong>Grounds:</strong> these are the exact per-county figures in the
         Development Fee &amp; Feasibility Gate formula on the Methodology tab (State of Hawaii OPSD Real
-        Estate Assumptions table — Lihu'e Town Core and Iwilei-Kapalama columns) — this chart runs that
-        formula once per county on one example unit, using the Challenge's standardized $50,000
-        development fee for both, so the comparison isolates the real geographic cost difference rather
-        than mixing in each county's own (different) actual fee schedule.</p>
+        Estate Assumptions table — all 4 TOD-site columns) — this chart runs that formula once per county
+        on one example unit, using the Challenge's standardized $50,000 development fee for all 4, so the
+        comparison isolates the real geographic cost difference rather than mixing in each county's own
+        (different) actual fee schedule. Feeds `generic_development_fee_reduction_feasibility()` for
+        Hawai'i County/Maui and the Kaua'i/Honolulu-specific equivalents for those two.</p>
       </div>
     </div>
 
@@ -660,16 +663,22 @@
       </div>
       <div class="takeaway" style="grid-column:1/-1;">
         <p class="stat-line" id="over-time-stat"></p>
+        <p class="stat-line"><strong>Grounds:</strong> this is the real revenue trend behind the
+        feasibility gate's rental-tenure test — `tract_scaled_rental_feasibility()` scales each county's
+        reference rent by real ACS median gross rent per tract, and the countywide ZORI line shown here is
+        the same figure used wherever no tract-level rent signal exists.</p>
       </div>
     </div>
 
     <div class="conditions-section">
       <div>
         <div class="chart-head">
-          <p class="chart-headline">Kauai's rental market is too thin to measure block by block</p>
-          <p class="chart-deck">Zillow's rent index has zero ZIP-code coverage for Kauai — the bars are
-          real ACS tract-level median gross rent; the dashed line is the one countywide figure Zillow
-          does publish.</p>
+          <p class="chart-headline">Outside Honolulu, Hawai'i's rental markets are too thin to measure below the county level</p>
+          <p class="chart-deck">Zillow's rent index has zero ZIP-code coverage for Kaua'i, Maui, or Hawai'i
+          County — county-level (ZORI) is the finest grain Zillow publishes for any of those three, so each
+          bar here is that one countywide figure. Honolulu has ZIP-level ZORI coverage in principle, but
+          only its own countywide series has been pulled into this tool so far, for the same reason: a
+          like-for-like comparison across all 4 counties.</p>
         </div>
         <canvas id="rentChart"></canvas>
       </div>
@@ -685,17 +694,21 @@
     <div class="conditions-section">
       <div>
         <div class="chart-head">
-          <p class="chart-headline">What owners say their home is worth, and what it actually sold for</p>
-          <p class="chart-deck">Two signals, kept separate on purpose: ACS median home value (self-reported,
-          2022) vs. 17 months of real county sales transactions, by tract, in dollars per building sqft.</p>
+          <p class="chart-headline">What homes actually sold for, county by county</p>
+          <p class="chart-deck">Real county sales transactions, by tract, in dollars per building sqft —
+          each county's own window (see the chart above for exact date ranges and record counts; Hawai'i
+          County's is a partial year with no arm's-length flag, a stated limitation, not hidden here).</p>
         </div>
         <canvas id="salesChart"></canvas>
       </div>
       <div class="takeaway">
         <p class="stat-line">Countywide real-sales median: <span id="sales-countywide-stat"></span></p>
-        <p class="stat-line"><strong>Grounds:</strong> these are the real comps `tract_comps_development_fee_reduction_feasibility()`
-        uses to replace the ACS-proxy sale price with an actual observed revenue figure, tract by tract — the feasibility gate's
-        revenue side, cross-validated against the project's independently-sourced OPSD pro forma.</p>
+        <p class="stat-line"><strong>Grounds:</strong> for Kaua'i, Hawai'i County, and Maui, these ARE the
+        real comps `tract_comps_development_fee_reduction_feasibility()` / `generic_tract_comps_development_fee_reduction_feasibility()`
+        use to replace an ACS-proxy sale price with an actual observed revenue figure, tract by tract — the
+        feasibility gate's direct revenue input. Honolulu's feasibility gate still scales revenue by ACS
+        median home value instead (`tract_scaled_oahu_development_fee_reduction_feasibility()`) — Honolulu's
+        bar here is real market cross-validation of that ACS-scaled figure, not the gate's own input.</p>
       </div>
     </div>
 
@@ -919,6 +932,45 @@
         no parking constraint gates eligibility (see Parking Requirement Reduction below for why).
         <code>existing_units_estimate</code> assumes 1 unit per already-residential parcel — Kauai has no
         direct unit-count field, so this is a stated simplification, not a measured count.</p>
+        <figure style="margin:14px 0;max-width:620px;">
+          <svg viewBox="0 0 560 190" width="100%" style="display:block;" role="img" aria-labelledby="adu-diagram-title">
+            <title id="adu-diagram-title">ADU eligibility test, as a line diagram</title>
+            <!-- Parcel outline -->
+            <rect x="16" y="20" width="200" height="150" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+            <text x="20" y="14" font-size="11" fill="var(--muted)" font-family="ui-monospace,monospace">parcel, zoning = R-</text>
+            <!-- Existing house -->
+            <rect x="40" y="110" width="70" height="50" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+            <path d="M36 110 L75 84 L114 110" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+            <text x="48" y="142" font-size="10" fill="var(--ink)">existing unit</text>
+            <!-- ADU, dashed since conditional -->
+            <rect x="130" y="118" width="60" height="42" fill="none" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <text x="138" y="146" font-size="10" fill="var(--ink)">+1 ADU?</text>
+            <!-- Arrow to test -->
+            <line x1="226" y1="95" x2="266" y2="95" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#adu-arrow)"/>
+            <defs>
+              <marker id="adu-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--muted)"/>
+              </marker>
+            </defs>
+            <!-- Three gate tests, stacked -->
+            <g font-family="ui-monospace,monospace" font-size="11">
+              <rect x="276" y="18" width="270" height="34" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="39" fill="var(--ink)">1. zoning is R-numbered (single-family)</text>
+              <rect x="276" y="60" width="270" height="34" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="81" fill="var(--ink)">2. has_existing_residential_unit</text>
+              <rect x="276" y="102" width="270" height="34" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="118" fill="var(--ink)">3. max_units_by_density ≥</text>
+              <text x="296" y="131" fill="var(--ink)">existing_units_estimate + 1</text>
+            </g>
+            <line x1="276" y1="52" x2="276" y2="60" stroke="var(--line)" stroke-width="1"/>
+            <line x1="276" y1="94" x2="276" y2="102" stroke="var(--line)" stroke-width="1"/>
+            <!-- Result -->
+            <line x1="546" y1="68" x2="546" y2="68" stroke="none"/>
+            <text x="286" y="162" font-size="11" fill="var(--ink)" font-weight="600">ALL three true → parcel is ADU-eligible</text>
+            <text x="286" y="178" font-size="10" fill="var(--muted)">(test 3 is the real per-district density rule — not a flat lot-size minimum)</text>
+          </svg>
+          <figcaption style="font-size:11px;color:var(--muted);margin-top:4px;">What the code actually checks before an ADU is counted eligible on a parcel — three gates, all required, no owner-occupancy or parking gate (per current Kaua'i law).</figcaption>
+        </figure>
         <p><strong>Sources:</strong> Kauai County Code §8-4.2(b)/§8-4.6 (the real per-district units/acre
         density rule, confirmed against the ordinance text, not inferred from zoning labels); Act 39 (2024)/SB3202
         (see the Existing Conditions legislation section above).</p>
@@ -958,6 +1010,45 @@ estimated_new_units_per_tract = count(eligible_parcels_in_tract) × absorption_r
         summed with the ADU scenario for the same parcel, since both draw on the same underlying density
         allowance — a combined number would need to take the max of the two, not their sum (not yet wired
         in).</p>
+        <figure style="margin:14px 0;max-width:620px;">
+          <svg viewBox="0 0 560 190" width="100%" style="display:block;" role="img" aria-labelledby="mm-diagram-title">
+            <title id="mm-diagram-title">Missing Middle capacity test, as a line diagram</title>
+            <!-- Parcel outline, wider to suggest "lot area" -->
+            <rect x="16" y="20" width="200" height="150" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+            <text x="20" y="14" font-size="11" fill="var(--muted)" font-family="ui-monospace,monospace">parcel, baseline_capacity = 0</text>
+            <!-- Grid of unit boxes filling the lot, some solid (counted) some dashed (capped away) -->
+            <g stroke="var(--ink)" stroke-width="1.25" fill="none">
+              <rect x="26" y="34" width="54" height="40"/>
+              <rect x="88" y="34" width="54" height="40"/>
+              <rect x="150" y="34" width="54" height="40"/>
+              <rect x="26" y="82" width="54" height="40"/>
+              <rect x="88" y="82" width="54" height="40"/>
+              <rect x="150" y="82" width="54" height="40" stroke-dasharray="4 3"/>
+            </g>
+            <text x="26" y="150" font-size="9.5" fill="var(--muted)">5 units fit (6th would exceed area cap)</text>
+            <line x1="226" y1="95" x2="266" y2="95" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mm-arrow)"/>
+            <defs>
+              <marker id="mm-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--muted)"/>
+              </marker>
+            </defs>
+            <g font-family="ui-monospace,monospace" font-size="11">
+              <rect x="276" y="18" width="270" height="34" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="39" fill="var(--ink)">1. baseline_capacity == 0</text>
+              <rect x="276" y="60" width="270" height="52" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="78" fill="var(--ink)">2. cap = min(6,</text>
+              <text x="300" y="92" fill="var(--ink)">floor(lot_sqft / 815))</text>
+              <text x="286" y="106" fill="var(--muted)" font-size="9.5">(815 sqft = real Oʻahu apt. avg.)</text>
+              <rect x="276" y="120" width="270" height="34" fill="none" stroke="var(--ink)" stroke-width="1.25"/>
+              <text x="286" y="141" fill="var(--ink)">3. +units = cap − existing (≥ 0)</text>
+            </g>
+            <line x1="276" y1="52" x2="276" y2="60" stroke="var(--line)" stroke-width="1"/>
+            <line x1="276" y1="112" x2="276" y2="120" stroke="var(--line)" stroke-width="1"/>
+            <text x="286" y="164" font-size="11" fill="var(--ink)" font-weight="600">test 1 true AND test 3 &gt; 0 → eligible</text>
+            <text x="286" y="180" font-size="10" fill="var(--muted)">(floor-area cap is single-story-equivalent — a conservative floor, not a precise one)</text>
+          </svg>
+          <figcaption style="font-size:11px;color:var(--muted);margin-top:4px;">Only parcels current zoning already caps at their existing unit count get a reform credit, and even then only up to whatever floor area the lot can actually hold.</figcaption>
+        </figure>
         <p><strong>Sources:</strong> same density ordinance as ADU (Kauai County Code §8-4.2(b)/§8-4.6); the
         2–6-unit/3-story ceiling is the Challenge benchmark's own stated definition of "Missing Middle," not
         a Kauai-specific figure; RentCafe/Yardi Matrix's Oahu apartment market page
@@ -2549,6 +2640,25 @@ function renderAssumptionsTab() {
       landPricePerGsf: 225,
       salePrice: 646_800,             // lowrise_for_sale market sale price
     },
+    // Added 2026-10-27, per the OPSD report's same "Real Estate
+    // Assumptions" table turning out to cover all 4 TOD pilot areas, not
+    // just 2 -- see MAUI_KAAHUMANU_PRO_FORMA_INPUTS/
+    // HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS in build_model.py for the
+    // source citation.
+    maui: {
+      label: "Maui (Ka'ahumanu Ave)",
+      color: "#6a3fa0",
+      hardCostPerGsf: 570,             // lowrise_for_sale, MAUI_KAAHUMANU_PRO_FORMA_INPUTS
+      landPricePerGsf: 34,
+      salePrice: 612_497,              // lowrise_for_sale market sale price
+    },
+    hawaii: {
+      label: "Hawai'i County (Ane Keohokalole)",
+      color: "#7a4a1f",
+      hardCostPerGsf: 532,             // lowrise_for_sale, HAWAII_ANEKEOHOKALOLE_PRO_FORMA_INPUTS
+      landPricePerGsf: 5.5,
+      salePrice: 549_286,              // lowrise_for_sale market sale price
+    },
   };
   const proformaResults = Object.fromEntries(Object.entries(PROFORMA_BY_COUNTY).map(([c, cfg]) => {
     const hardCost = unitGsf * cfg.hardCostPerGsf;
@@ -2703,7 +2813,7 @@ function renderAssumptionsTab() {
   });
   document.getElementById("rent-countywide-stat").textContent = activeTrendCounties
     .map(c => `${byCounty[c].label}: $${(byCounty[c].countywide_zori_usd_per_month || 0).toLocaleString()}/month`)
-    .join(" -- ") + " (Zillow ZORI, Aug 2026) -- the only figure Zillow publishes below the state level for either market.";
+    .join(" -- ") + " (Zillow ZORI, Aug 2026) -- the only figure Zillow publishes below the state level for any of these markets.";
 
   if (salesChart) salesChart.destroy();
   salesChart = new Chart(document.getElementById("salesChart").getContext("2d"), {
@@ -2732,28 +2842,36 @@ function renderAssumptionsTab() {
   // (both already collected and processed for Kauai and Honolulu), so
   // both counties get the full households-vs-affordable-stock pairing
   // below, with no client-side reconstruction needed.
-  const kauaiIncomeRows = (byCounty.kauai || {}).income_vs_affordable_stock || [];
-  const honoluluIncomeRows = (byCounty.honolulu || {}).income_vs_affordable_stock || [];
+  // Generalized 2026-10-27 from a hardcoded kauai/honolulu pair -- loops
+  // over every county that actually has income_vs_affordable_stock data
+  // (now all 4; previously only Kaua'i/Honolulu had it computed), so a
+  // newly-added county's real data shows up here automatically rather
+  // than needing a new hardcoded branch each time.
+  const incomeCountyRows = {};
+  Object.keys(byCounty).forEach(c => {
+    const r = (byCounty[c] || {}).income_vs_affordable_stock || [];
+    if (r.length) incomeCountyRows[c] = r;
+  });
 
   const incomeDatasets = [];
-  if (kauaiIncomeRows.length) {
-    incomeDatasets.push({ label: "Kaua'i households", data: kauaiIncomeRows.map(r => r.pct_households), backgroundColor: COUNTY_CHART_COLORS.kauai.line, borderColor: "#14110b", borderWidth: 1.5 });
-    incomeDatasets.push({ label: "Kaua'i: share of sales affordable", data: kauaiIncomeRows.map(r => r.pct_sales_affordable), backgroundColor: COUNTY_CHART_COLORS.kauai.bar, borderColor: "#14110b", borderWidth: 1.5 });
-  }
-  if (honoluluIncomeRows.length) {
-    incomeDatasets.push({ label: "Honolulu households", data: honoluluIncomeRows.map(r => r.pct_households), backgroundColor: COUNTY_CHART_COLORS.honolulu.line, borderColor: "#14110b", borderWidth: 1.5 });
-    incomeDatasets.push({ label: "Honolulu: share of sales affordable", data: honoluluIncomeRows.map(r => r.pct_sales_affordable), backgroundColor: COUNTY_CHART_COLORS.honolulu.bar, borderColor: "#14110b", borderWidth: 1.5 });
-  }
+  Object.entries(incomeCountyRows).forEach(([c, r]) => {
+    const label = byCounty[c].label;
+    const colors = COUNTY_CHART_COLORS[c] || { bar: "#888", line: "#555" };
+    incomeDatasets.push({ label: `${label} households`, data: r.map(row => row.pct_households), backgroundColor: colors.line, borderColor: "#14110b", borderWidth: 1.5 });
+    incomeDatasets.push({ label: `${label}: share of sales affordable`, data: r.map(row => row.pct_sales_affordable), backgroundColor: colors.bar, borderColor: "#14110b", borderWidth: 1.5 });
+  });
   if (incomeChart) incomeChart.destroy();
   incomeChart = new Chart(document.getElementById("incomeChart").getContext("2d"), {
     type: "bar",
     data: { labels: INCOME_BRACKET_LABELS, datasets: incomeDatasets },
     options: { scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "% (of households / of sales)" } } } }
   });
-  const kauaiUnder75k = kauaiIncomeRows.slice(0, 11).reduce((s, r) => s + (r.pct_households || 0), 0);
-  const honoluluUnder75k = honoluluIncomeRows.slice(0, 11).reduce((s, r) => s + (r.pct_households || 0), 0);
+  const under75kByCounty = Object.entries(incomeCountyRows).map(([c, r]) => {
+    const pct = r.slice(0, 11).reduce((s, row) => s + (row.pct_households || 0), 0);
+    return `${pct.toFixed(0)}% of ${byCounty[c].label} households`;
+  });
   document.getElementById("income-gap-stat").textContent =
-    `Households earning under $75,000/year can afford almost none of what's actually selling, in both counties: ${kauaiUnder75k.toFixed(0)}% of Kaua'i households and ${honoluluUnder75k.toFixed(0)}% of Honolulu households fall under that line, against affordable-stock shares that only clear 10% around the $100-125K bracket and only exceed a household's own population share at $200,000+. The $200,000+ bracket's affordable price uses a stated $250,000 representative income, since that bracket has no real upper bound.`;
+    `Households earning under $75,000/year can afford almost none of what's actually selling, in every county modeled: ${under75kByCounty.join(", ")} fall under that line, against affordable-stock shares that only clear 10% around the $100-125K bracket and only exceed a household's own population share at $200,000+. The $200,000+ bracket's affordable price uses a stated $250,000 representative income, since that bracket has no real upper bound.`;
 
   // -- Commute & density -- REBUILT 2026-10-16: the old dual-axis bar+line
   // chart put Honolulu's ~12,633 people/sq mi and Kaua'i's ~675 on the
@@ -2821,7 +2939,7 @@ function renderAssumptionsTab() {
     `<strong>How much could parking demand actually fall?</strong> ${parkingEstimates.join(" ")}`;
   document.getElementById("density-headline").textContent =
     activeTrendCounties.length > 1
-      ? "Honolulu's density and non-car commuting predict a real parking-demand drop; Kaua'i's predicts almost none"
+      ? "Honolulu's density and non-car commuting predict a real parking-demand drop; the other 3 counties predict almost none"
       : "Non-car commuting and density predict less parking demand";
 }
 
