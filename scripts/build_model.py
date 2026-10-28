@@ -2100,6 +2100,98 @@ def honolulu_parking_reform_context(acs_commute_density_csv: Path | None = None)
     }
 
 
+def hawaii_parking_reform_context(acs_commute_density_csv: Path | None = None) -> dict:
+    """
+    Hawai'i County analog of kauai_parking_reform_context(). Same
+    not-in-sample caveat as Kauai: no Hawai'i County/Big Island data point
+    exists in Sohoni & Lee (2025)'s 9-city sample, so this does not apply a
+    quantitative post-reform reduction ratio -- it places Hawai'i County on
+    the study's own two axes (real ACS data, fetch_data.py --layer
+    acs_commute_density --county hawaii) and reports the same low-end range
+    (the study's own "minimal effect" cities' observed outcomes) as the
+    best-supported estimate, rather than inventing a Hawai'i-specific
+    number the study doesn't support.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_hawaii.csv")
+    if not path.exists():
+        return {
+            "available": False,
+            "reason": f"{path} not found -- run `fetch_data.py --layer acs_commute_density "
+            "--county hawaii` (requires a free Census API key) first.",
+        }
+    df = pd.read_csv(path)
+    total_commuters = df["commuters_excl_wfh"].sum()
+    total_pop = df["population"].sum()
+    countywide_alt_mode_pct = (df["pct_alt_mode_commute"] * df["commuters_excl_wfh"]).sum() / total_commuters
+    countywide_density = (df["density_per_sqmi"] * df["population"]).sum() / total_pop
+    minimal_effect_cities = {
+        city: vals for city, vals in PARKING_STUDY_CITY_BENCHMARKS.items()
+        if "minimal effect" in vals[2]
+    }
+    minimal_effect_reductions = sorted(
+        round(100 * (1 - after / before), 1) for before, after, _ in minimal_effect_cities.values()
+    )
+    return {
+        "available": True,
+        "countywide_alt_mode_commute_pct": round(countywide_alt_mode_pct, 1),
+        "countywide_density_per_sqmi": round(countywide_density, 1),
+        "study_city_benchmarks": PARKING_STUDY_CITY_BENCHMARKS,
+        "low_end_context": PARKING_STUDY_LOW_END_ALT_MODE_COMMUTE_CONTEXT,
+        "low_end_reduction_pct_range": minimal_effect_reductions,
+        "low_end_reduction_cities": list(minimal_effect_cities.keys()),
+        "verdict": f"Hawai'i County's countywide non-car commute share (~{round(countywide_alt_mode_pct, 1)}%) "
+        f"and density (~{round(countywide_density, 1)} people/sq mi) sit below the study's own "
+        "'minimal effect' anchor cities (Grand Rapids, Hartford) on both axes -- the same "
+        "out-of-sample position as Kauai, not Honolulu's in-sample one. Those two cities' OWN "
+        f"observed post-reform parking-supply reduction ({minimal_effect_reductions[0]}%-"
+        f"{minimal_effect_reductions[1]}%) is the best-supported quantified estimate here too.",
+    }
+
+
+def maui_parking_reform_context(acs_commute_density_csv: Path | None = None) -> dict:
+    """
+    Maui analog of hawaii_parking_reform_context() -- same out-of-sample
+    treatment: no Maui data point in Sohoni & Lee (2025)'s 9-city sample,
+    so this reports Maui's real ACS commute/density figures against the
+    study's axes and the same literature-derived low-end range, rather
+    than a Maui-specific invented ratio.
+    """
+    path = acs_commute_density_csv or (RAW_DIR / "acs_commute_density_maui.csv")
+    if not path.exists():
+        return {
+            "available": False,
+            "reason": f"{path} not found -- run `fetch_data.py --layer acs_commute_density "
+            "--county maui` (requires a free Census API key) first.",
+        }
+    df = pd.read_csv(path)
+    total_commuters = df["commuters_excl_wfh"].sum()
+    total_pop = df["population"].sum()
+    countywide_alt_mode_pct = (df["pct_alt_mode_commute"] * df["commuters_excl_wfh"]).sum() / total_commuters
+    countywide_density = (df["density_per_sqmi"] * df["population"]).sum() / total_pop
+    minimal_effect_cities = {
+        city: vals for city, vals in PARKING_STUDY_CITY_BENCHMARKS.items()
+        if "minimal effect" in vals[2]
+    }
+    minimal_effect_reductions = sorted(
+        round(100 * (1 - after / before), 1) for before, after, _ in minimal_effect_cities.values()
+    )
+    return {
+        "available": True,
+        "countywide_alt_mode_commute_pct": round(countywide_alt_mode_pct, 1),
+        "countywide_density_per_sqmi": round(countywide_density, 1),
+        "study_city_benchmarks": PARKING_STUDY_CITY_BENCHMARKS,
+        "low_end_context": PARKING_STUDY_LOW_END_ALT_MODE_COMMUTE_CONTEXT,
+        "low_end_reduction_pct_range": minimal_effect_reductions,
+        "low_end_reduction_cities": list(minimal_effect_cities.keys()),
+        "verdict": f"Maui's countywide non-car commute share (~{round(countywide_alt_mode_pct, 1)}%) and "
+        f"density (~{round(countywide_density, 1)} people/sq mi) sit below the study's own 'minimal "
+        "effect' anchor cities (Grand Rapids, Hartford) on both axes, the same out-of-sample "
+        f"position as Kauai/Hawai'i County. Those cities' OWN observed post-reform reduction "
+        f"({minimal_effect_reductions[0]}%-{minimal_effect_reductions[1]}%) is the best-supported "
+        "quantified estimate here too -- not a Honolulu-scale reduction.",
+    }
+
+
 def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = None) -> tuple[pd.DataFrame, dict]:
     """
     Parking Requirement Reduction, built on the same ADU-eligible parcel
@@ -2121,21 +2213,60 @@ def run_parking_reduction_scenario(county: str, params: ScenarioParams | None = 
     params = params or ScenarioParams()
     adu_tract, metadata = run_adu_scenario(county, params)
 
-    sqft_per_parking_space = 200  # planning-literature placeholder, not Kauai-sourced
+    # Real, county-specific current-code ADU parking requirement, not a
+    # single Kauai figure assumed to hold everywhere:
+    # - Kauai/Honolulu: 1 space/unit (as before).
+    # - Hawai'i County: Zoning Code Sec. 25-4-53 -- confirmed via a real
+    #   permit-approval condition (Planning Dept. Ohana Dwelling permit
+    #   22-0008, Condition 6(d), gis.hawaiicounty.gov) citing a 2-space
+    #   minimum for an ohana/accessory dwelling unit. This is sourced from
+    #   one permit's condition referencing the code section, not the
+    #   master zoning-code parking table itself, so it is reported as the
+    #   best real evidence found rather than a verified blanket minimum --
+    #   stated here, not hidden.
+    # - Maui: County Code Sec. 19.36B.020 (as amended by Ord. 5983, 2023)
+    #   -- an accessory dwelling is explicitly required to provide "the
+    #   same minimum number of off-street parking spaces as a single-
+    #   family dwelling" under the bedroom-based schedule, which is 1
+    #   space for a studio/1-bedroom unit (the ADU size class this model
+    #   uses). Confirmed via the ordinance text itself, not assumed.
+    parking_spaces_required = {
+        "kauai": 1,
+        "honolulu": 1,
+        "hawaii": 2,
+        "maui": 1,
+    }.get(county, 1)
+
+    sqft_per_parking_space = 200  # planning-literature placeholder, not county-sourced
     adu_tract = adu_tract.copy()
     adu_tract["parking_land_consumed_sqft_if_required"] = (
-        adu_tract["eligible_parcel_count"] * sqft_per_parking_space
+        adu_tract["eligible_parcel_count"] * parking_spaces_required * sqft_per_parking_space
     )
-    metadata["parking_spaces_required_per_unit_current_code"] = 1
+    metadata["parking_spaces_required_per_unit_current_code"] = parking_spaces_required
     metadata["sqft_per_parking_space_assumption"] = sqft_per_parking_space
     metadata["note"] = (
-        "Parking does not change eligibility on Kauai (ADUs require 1 space either way "
-        "under current code) -- this scenario reports land consumed by that requirement, "
-        "not a change in which parcels qualify. Reducing the requirement to 0 removes this "
-        "land cost but produces the same eligible_parcel_count as the ADU scenario above."
+        f"Parking does not change eligibility in this county (ADUs require "
+        f"{parking_spaces_required} space(s) either way under current code) -- this scenario "
+        "reports land consumed by that requirement, not a change in which parcels qualify. "
+        "Reducing the requirement to 0 removes this land cost but produces the same "
+        "eligible_parcel_count as the ADU scenario above."
     )
     if county == "kauai":
         metadata["post_reform_parking_supply_context"] = kauai_parking_reform_context()
+    elif county == "hawaii":
+        metadata["post_reform_parking_supply_context"] = hawaii_parking_reform_context()
+        metadata["current_code_parking_requirement_source"] = (
+            "Hawai'i County Zoning Code Sec. 25-4-53, as cited in Ohana Dwelling permit "
+            "22-0008 Condition 6(d) (gis.hawaiicounty.gov) -- a 2-space minimum confirmed via "
+            "that permit condition, not the master zoning-code table directly."
+        )
+    elif county == "maui":
+        metadata["post_reform_parking_supply_context"] = maui_parking_reform_context()
+        metadata["current_code_parking_requirement_source"] = (
+            "Maui County Code Sec. 19.36B.020, as amended by Ord. 5983 (2023) -- an accessory "
+            "dwelling must provide the same off-street parking as a single-family dwelling "
+            "under the bedroom-based schedule (1 space for a studio/1-bedroom unit)."
+        )
     elif county == "honolulu":
         metadata["post_reform_parking_supply_context"] = honolulu_parking_reform_context()
         # ROH 21-6.30(b)'s own waiver provisions (confirmed 2026-10-15):

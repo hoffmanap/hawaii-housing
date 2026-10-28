@@ -917,10 +917,13 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     tenures, routed through apply_dual_tenure_affordability_gate()) applied
     to ADU and Missing Middle only -- NOT TOD or Parking Reduction, since
     neither county has a TOD transit-stop layer or a parking-reform study
-    wired in yet (same real gap build_light_county_features() already
-    stated; not newly introduced here). Those two scenarios stay absent
-    from this county's `scenarios_available` list for exactly that reason,
-    not an oversight.
+    wired in yet. TOD stays absent from this county's `scenarios_available`
+    list for exactly that reason. Parking Reduction, however, now IS
+    modeled (added 2026-10-27, see hawaii_parking_reform_context()/
+    maui_parking_reform_context() and the real, county-specific current-
+    code parking-space citations in run_parking_reduction_scenario()) --
+    same literature-based (Sohoni & Lee 2025), not-in-study-sample
+    treatment as Kaua'i, not Honolulu's in-sample one.
     """
     bm.build_county(county)
     default_absorption_rate = bm.absorption_rate_benchmark_for(county)
@@ -942,6 +945,8 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     adu_gated = bm.apply_dual_tenure_affordability_gate(adu_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
     mm_gated = bm.apply_dual_tenure_affordability_gate(mm_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
 
+    parking_tract, parking_meta = bm.run_parking_reduction_scenario(county)
+
     adu_tract = adu_gated.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
     mm_tract = mm_gated.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
     mm_baseline_tract = mm_baseline_tract.copy(); mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
@@ -951,6 +956,8 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
     mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
     zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
+    parking_tract = parking_tract.copy(); parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
+    parking_by_geoid = {r["GEOID"]: r for r in parking_tract.to_dict("records")}
 
     fips_prefix = COUNTY_TRACT_FIPS_PREFIX[county]
     tracts = json.loads((RAW_DIR / "census_tracts.json").read_text())["features"]
@@ -1017,6 +1024,7 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
         sales_r = sales_by_geoid.get(geoid, {})
         acs_r = acs_by_geoid.get(geoid, {})
         income_r = income_by_geoid.get(geoid, {})
+        parking_r = parking_by_geoid.get(geoid, {})
         props = {
             "GEOID": geoid,
             "county": county,
@@ -1043,6 +1051,8 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             "mm_winning_tenure": mm_r.get("winning_tenure"),
             "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
+            "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
+            "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
             "median_gross_rent_usd": acs_r.get("median_gross_rent_usd"),
             "pct_alt_mode_commute": acs_r.get("pct_alt_mode_commute"),
@@ -1081,6 +1091,10 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
         "adu_affordability_adjusted_units_rental": round(adu_gated["affordability_adjusted_units_rental"].sum(), 1),
         "mm_affordability_adjusted_units_for_sale": round(mm_gated["affordability_adjusted_units_for_sale"].sum(), 1),
         "mm_affordability_adjusted_units_rental": round(mm_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "parking_spaces_required_per_unit_current_code": parking_meta.get("parking_spaces_required_per_unit_current_code"),
+        "parking_land_consumed_sqft_total": round(float(parking_tract["parking_land_consumed_sqft_if_required"].sum()), 1),
+        "parking_reform_context": parking_meta.get("post_reform_parking_supply_context"),
+        "current_code_parking_requirement_source": parking_meta.get("current_code_parking_requirement_source"),
         "existing_conditions_summary": {
             "total_parcel_count": int(zoned_capacity_tract["total_parcel_count"].sum()),
             "residential_parcel_count": int(zoned_capacity_tract["residential_parcel_count"].sum()),
@@ -1097,9 +1111,11 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
             "Infrastructure Funding and Financing Options' report Kaua'i/Honolulu's pro formas come "
             "from (it covers all 4 counties' TOD pilot areas, not just those two), scaled by this "
             "county's own real sales comps, exactly as Kaua'i's tract_comps_ version already works. "
-            "TOD and Parking Reduction remain NOT modeled for this county -- no transit-stop layer or "
-            "parking-reform study exists yet -- so this entry still does not appear in the Scenario "
-            "Explorer's TOD/Parking views, only ADU and Missing Middle."
+            "Parking Requirement Reduction is now modeled too (added 2026-10-27): a real, "
+            "county-specific current-code parking-space citation (not Kaua'i's figure assumed to "
+            "hold everywhere) and the same Sohoni & Lee (2025) literature-based reform context "
+            "Kaua'i uses. TOD remains NOT modeled -- no transit-stop layer exists yet -- so this "
+            "entry still does not appear in the Scenario Explorer's TOD view."
         ),
         "affordability_note": (
             "Of the feasibility-adjusted units, pct_affording is the real share of that tract's own "
@@ -1147,8 +1163,8 @@ def main() -> None:
         # still no TOD or Parking Reduction, since neither county has a
         # transit-stop layer or parking-reform study, so scenarios_available
         # stays ["adu", "mm"] for both, same as before this upgrade.
-        "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm"]},
-        "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm"]},
+        "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm", "parking"]},
+        "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm", "parking"]},
     }
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
