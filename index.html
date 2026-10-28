@@ -1032,8 +1032,8 @@
     <div style="display:flex;align-items:center;gap:10px;">
       <span style="font-size:12.5px;font-weight:600;">Charts below, grouped by:</span>
       <div class="toggle-row" id="geo-toggle-conditions" style="margin:0;width:220px;">
-        <button data-geo="tract" class="active">Tract</button>
-        <button data-geo="place">Place</button>
+        <button data-geo="tract">Tract</button>
+        <button data-geo="place" class="active">Place</button>
       </div>
       <span style="font-size:11.5px;color:var(--muted);">Kauai has no incorporated cities — "place" groups tracts by Census Designated Place (Lihu'e, Kapa'a, Koloa, ...) using a real land-area overlap, not a guess. Rural tracts may only partially overlap the place they're grouped under.</span>
     </div>
@@ -1077,6 +1077,40 @@
           (teal), with no reform.</p>
         </div>
         <canvas id="builtVsCapacityChart"></canvas>
+      </div>
+    </div>
+
+    <div class="conditions-section" style="grid-template-columns:1fr;">
+      <div style="grid-column:1/-1;">
+        <div class="chart-head">
+          <p class="chart-headline">Capacity used vs. unused, on the map</p>
+          <p class="chart-deck">Same built/zoned/unused-capacity numbers as the chart above, shown geographically.
+          With "Tract" selected above, each tract is colored by its own figure; with "Place" selected, every
+          tract inside a place is tinted that place's combined figure -- the shapes themselves stay at tract
+          resolution either way, since there's no merged city-boundary polygon to draw instead (the same
+          simplification already used by the Scenario Explorer's own tract/place toggle). Click a shape for
+          its exact built/capacity/unused numbers.</p>
+        </div>
+        <div style="display:flex;gap:14px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+          <label style="font-size:12.5px;">County: <select id="capacity-map-county-filter">
+            <option value="all">All</option>
+            <option value="kauai">Kaua'i</option>
+            <option value="honolulu">Honolulu</option>
+            <option value="hawaii">Hawai'i County</option>
+            <option value="maui">Maui County</option>
+          </select></label>
+          <div class="toggle-row" id="capacity-map-metric-toggle" style="margin:0;width:280px;">
+            <button data-metric="headroom" class="active">Unused capacity</button>
+            <button data-metric="pct_used">% of capacity used</button>
+          </div>
+          <span style="font-size:11.5px;color:var(--muted);" id="capacity-map-count"></span>
+        </div>
+        <div id="capacity-map" style="height:480px;border:1.5px solid var(--ink);"></div>
+        <div class="legend-box" style="margin-top:8px;">
+          <span id="capacity-map-legend-lo">Less</span>
+          <div class="ramp" id="capacity-ramp"></div>
+          <span id="capacity-map-legend-hi">More</span>
+        </div>
       </div>
     </div>
 
@@ -1632,6 +1666,9 @@ const COLORS = {
 
 let geoData = null;
 let map, geoLayer, barChart;
+let capacityMap, capacityMapLayer;
+let pendingCapacityMapFit = true; // same hidden-container-at-load gotcha as pendingMapFit above -- fitBounds computed while the tab is hidden gets the wrong zoom, so it's deferred to the tab-switch handler instead
+let lastCapacityMapFitKey = null; // re-fit when the county FILTER changes (e.g. "All" -> "Hawai'i County"), same pattern as lastFitCountyKey above, not on every metric/geo toggle
 let lastFitCountyKey = null; // forces the first real fitBounds to happen once the map is actually visible -- see render()'s fitBounds call and the tab-click handler
 let pendingMapFit = true;
 
@@ -1676,7 +1713,7 @@ let defaultFeeUsd = 50000;
 // i'd default to place before tracts. tracts are pretty useless") -- and
 // reformInclude is which reforms count toward the "combined" headline
 // card, independent of which single scenario is shown on the map.
-let state = { view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu", "hawaii", "maui"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all",
+let state = { view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "place", scenarioCounties: new Set(["kauai", "honolulu", "hawaii", "maui"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all", capacityMapCounty: "all", capacityMapMetric: "headroom",
   // Which reforms are shown on the map/totals, all at once -- mix and
   // match, not a single radio pick. ADU/Missing Middle/TOD are UNITS
   // reforms and their map color is their SUM (see displayValue()) --
@@ -1831,6 +1868,25 @@ async function init() {
     attribution: "&copy; OpenStreetMap contributors"
   }).addTo(map);
 
+  capacityMap = L.map("capacity-map", { zoomControl: true, attributionControl: false }).setView([STATEWIDE_MAP_VIEW[0], STATEWIDE_MAP_VIEW[1]], STATEWIDE_MAP_VIEW[2]);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(capacityMap);
+
+  document.getElementById("capacity-map-county-filter").addEventListener("change", (e) => {
+    state.capacityMapCounty = e.target.value;
+    renderCapacityMap();
+  });
+  document.querySelectorAll('#capacity-map-metric-toggle button').forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll('#capacity-map-metric-toggle button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.capacityMapMetric = btn.dataset.metric;
+      renderCapacityMap();
+    });
+  });
+
   render();
   renderConditionsTab();
   renderAssumptionsTab();
@@ -1851,6 +1907,15 @@ async function init() {
       document.getElementById("methodology-tab").style.display = tab === "methodology" ? "" : "none";
       if (tab === "conditions") {
         renderConditionsTab();
+        if (capacityMap) {
+          setTimeout(() => {
+            capacityMap.invalidateSize();
+            if (pendingCapacityMapFit && capacityMapLayer && capacityMapLayer.getLayers().length) {
+              capacityMap.fitBounds(capacityMapLayer.getBounds().pad(0.05), { animate: false });
+              pendingCapacityMapFit = false;
+            }
+          }, 50);
+        }
       } else if (tab === "assumptions") {
         renderAssumptionsTab();
       } else if (tab === "scenario" && map) {
@@ -2589,6 +2654,95 @@ function conditionsRows(feats) {
   return feats.map(f => f.properties).map(p => ({ ...p, name: shortName(p) }));
 }
 
+// Capacity map, added per direct request ("add a map with the ability to
+// look at capacity used/unused by tract/city"). Shares state.conditionsGeo
+// with the tract/place toggle above it -- "by place" doesn't merge tract
+// polygons into real city boundaries (no such geometry exists in this
+// project; see the chart-deck copy above, stated plainly, not hidden),
+// it tints every tract inside a place with that place's own combined
+// built/capacity/headroom figures, the same simplification already used
+// elsewhere in this codebase for the Scenario Explorer's own toggle.
+function renderCapacityMap() {
+  if (!capacityMap) return; // not initialized yet (shouldn't happen -- init runs at page load)
+  const isPlace = state.conditionsGeo === "place";
+  const countyFilter = state.capacityMapCounty;
+  const metric = state.capacityMapMetric; // "headroom" (units) or "pct_used" (0-100)
+
+  const feats = geoData.features.filter(f => countyFilter === "all" || f.properties.county === countyFilter);
+
+  // Build a lookup from place key -> the SAME aggregated group figures
+  // aggregatePlaceConditionsRows() computes for the chart/table above, so
+  // the map can never show a different number than they do.
+  let placeValueByKey = null;
+  if (isPlace) {
+    placeValueByKey = new Map();
+    aggregatePlaceConditionsRows(feats).forEach(row => {
+      placeValueByKey.set(`${row.name}||${row.county}`, row);
+    });
+  }
+
+  function groupFor(feat) {
+    if (!isPlace) return feat.properties;
+    return placeValueByKey.get(`${feat.properties.place_name}||${feat.properties.county}`) || null;
+  }
+  function valueFor(feat) {
+    const g = groupFor(feat);
+    if (!g) return null;
+    if (metric === "pct_used") {
+      return g.existing_zoned_capacity_total > 0 ? 100 * (g.existing_units_built || 0) / g.existing_zoned_capacity_total : null;
+    }
+    return g.existing_zoned_headroom;
+  }
+
+  const shownFeats = feats.filter(f => groupFor(f) != null);
+  const values = shownFeats.map(valueFor).filter(v => v != null);
+  const max = metric === "pct_used" ? 100 : Math.max(...values, 1);
+
+  document.getElementById("capacity-map-legend-lo").textContent = metric === "pct_used" ? "0% used" : "Less unused capacity";
+  document.getElementById("capacity-map-legend-hi").textContent = metric === "pct_used" ? "100% used" : "More unused capacity";
+  const ramp = document.getElementById("capacity-ramp");
+  ramp.innerHTML = "";
+  COLORS.ramp.forEach(c => {
+    const d = document.createElement("div");
+    d.style.background = c;
+    ramp.appendChild(d);
+  });
+  document.getElementById("capacity-map-count").textContent =
+    `${shownFeats.length} of ${feats.length} ${isPlace ? "tracts (grouped into places)" : "tracts"} shown`;
+
+  if (capacityMapLayer) capacityMapLayer.remove();
+  capacityMapLayer = L.geoJSON({ type: "FeatureCollection", features: shownFeats }, {
+    style: feat => {
+      const v = valueFor(feat);
+      return { fillColor: colorScale(v, max), fillOpacity: 0.85, color: "#8a9aa8", weight: 0.6 };
+    },
+    onEachFeature: (feat, layer) => {
+      const g = groupFor(feat);
+      const p = feat.properties;
+      const name = isPlace ? `${g.name} (${(geoData.metadata.by_county[p.county] || {}).label || p.county})` : shortName(p).replace(/; .+ County; Hawaii$/, "");
+      const pctUsed = g.existing_zoned_capacity_total > 0 ? Math.round(100 * (g.existing_units_built || 0) / g.existing_zoned_capacity_total) : null;
+      layer.bindPopup(
+        `<b>${name}</b><br>` +
+        `Built (existing units, est.): ${Math.round(g.existing_units_built || 0).toLocaleString()}<br>` +
+        `Zoned capacity, total: ${Math.round(g.existing_zoned_capacity_total || 0).toLocaleString()}<br>` +
+        `Unused capacity: ${Math.round(g.existing_zoned_headroom || 0).toLocaleString()}<br>` +
+        (pctUsed != null ? `% of capacity already used: ${pctUsed}%` : "")
+      );
+    }
+  }).addTo(capacityMap);
+
+  if (countyFilter !== lastCapacityMapFitKey) {
+    lastCapacityMapFitKey = countyFilter;
+    pendingCapacityMapFit = true;
+  }
+  const mapVisible = document.getElementById("conditions-tab").style.display !== "none";
+  if (mapVisible && pendingCapacityMapFit && capacityMapLayer.getLayers().length) {
+    capacityMap.invalidateSize();
+    capacityMap.fitBounds(capacityMapLayer.getBounds().pad(0.05), { animate: false });
+    pendingCapacityMapFit = false;
+  }
+}
+
 const COUNTY_CHART_COLORS = {
   kauai: { bar: "#1fa38a", line: "#ff5a5f" },
   honolulu: { bar: "#2e6fd9", line: "#ffb400" },
@@ -2940,6 +3094,8 @@ function renderConditionsTab() {
     </tr>
   `;
   }).join("");
+
+  renderCapacityMap();
 }
 
 let absorptionRateChart, costProFormaChart;
