@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hawaii Housing Reform Impact Tool — Kauai Pilot</title>
+<title>Hawaii Housing Reform Impact Tool</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -319,76 +319,73 @@
 <div class="panel" style="max-width:1500px;margin:16px auto 0;padding:20px 28px;">
   <h2 style="margin-top:0;">What this is</h2>
   <p>
-    This is a submission to the <b>Housing Data and Technology Innovation Challenge</b>: a
+    This is a submission to the <b>Housing Data and Technology Innovation Challenge</b>, a
     statewide zoning-reform impact model for Hawaii. The Challenge asked teams to build a tool
-    that measures how specific reforms — more units per lot, density near transit, smaller
-    parking minimums — would actually change the housing supply, not just whether they're
+    that measures how specific reforms (more units per lot, more density near transit, smaller
+    parking requirements) would actually change the housing supply, not just whether they are
     legally allowed.
   </p>
   <p>
-    So this tool keeps two questions separate at every step: <b>what's legally buildable today</b>
-    (zoning capacity) versus <b>what a specific reform would add on top of that</b> (the policy's
-    own incremental effect). A reform's total theoretical capacity is never reported as if it
-    were the reform's impact — only the difference between baseline and reform counts.
+    This tool keeps two questions separate at every step. First, <b>what's legally buildable
+    today</b> under current zoning. Second, <b>what a specific reform would add on top of
+    that</b>. We only ever report the second number as a reform's impact, never the first.
   </p>
   <p>
     Three reforms are modeled against real parcel, zoning, income, sales, and transit data:
-    <b>ADUs</b> (accessory units on existing lots), <b>Missing Middle</b> (2–6 units per lot),
-    and <b>Transit-Oriented Density</b> (upzoning near real bus/rail stops). A fourth,
-    <b>Parking Requirement Reduction</b>, is modeled separately since it doesn't add units
-    directly — it changes what else is feasible to build. Every parcel that clears a reform's
-    zoning test is then run through a real development pro forma (does it pencil to build?) and
-    an affordability gate (can the tract's own households actually afford it?) before counting
-    toward any headline number.
+    <b>ADUs</b> (a second small unit on an existing lot), <b>Missing Middle</b> housing (2 to 6
+    units per lot), and <b>Transit-Oriented Density</b> (more density allowed near real bus and
+    rail stops). A fourth, <b>Parking Requirement Reduction</b>, works differently: it does not
+    add units directly, it changes what else becomes possible to build once less land has to go
+    to parking. Before any parcel counts toward a headline number, it has to clear two tests: a
+    real development budget (would it actually make money to build?) and an affordability check
+    (can people who live there actually afford it?).
   </p>
 
   <h2>How to read the other tabs</h2>
   <ul style="line-height:1.7;">
-    <li><b>Existing Conditions</b> — the starting point: how much is already zoned and buildable right now, county by county and tract by tract, independent of any reform.</li>
-    <li><b>Scenario Explorer</b> — pick one or more counties and reforms and see the incremental units each would add, on the map and in headline totals.</li>
-    <li><b>Assumptions &amp; Methodology</b> — where every number in this tool comes from: the formulas, the real market data behind them, and the sourced constants (construction costs, mortgage rates, absorption rates) that feed the pro forma.</li>
+    <li><b>Existing Conditions</b>: the starting point. How much is already zoned and buildable right now, county by county, before any reform.</li>
+    <li><b>Scenario Explorer</b>: pick one or more counties and reforms and see how many units each would add, on the map and in the totals.</li>
+    <li><b>Assumptions &amp; Methodology</b>: where every number in this tool comes from. The real market data, the formulas, and the sourced figures (construction costs, mortgage rates, how fast permits actually get built) behind every estimate.</li>
   </ul>
 
   <h2>Where the data stands</h2>
   <div class="county-row" style="margin:0 0 10px;">
-    <span class="county-pill active">Kaua'i — built out</span>
-    <span class="county-pill active">Honolulu — built out (Existing Conditions + Scenario Explorer: ADU/Missing Middle/TOD/Parking)</span>
-    <span class="county-pill active">Maui — Scenario Explorer: ADU/Missing Middle, feasibility- and affordability-gated (no TOD/Parking yet)</span>
-    <span class="county-pill active">Hawai'i County — Scenario Explorer: ADU/Missing Middle, feasibility- and affordability-gated (no TOD/Parking yet)</span>
+    <span class="county-pill active">Kaua'i: full coverage (ADU, Missing Middle, TOD, Parking)</span>
+    <span class="county-pill active">Honolulu: full coverage (ADU, Missing Middle, TOD, Parking)</span>
+    <span class="county-pill active">Hawai'i County: ADU, Missing Middle, Parking (no TOD yet)</span>
+    <span class="county-pill active">Maui County: ADU, Missing Middle, Parking (no TOD yet)</span>
   </div>
   <p style="font-size:12.5px;color:var(--muted);margin:0;">
-    All four counties now appear in the Scenario Explorer. Kaua'i and Honolulu have the full
-    pipeline (ADU, Missing Middle, TOD, Parking, all feasibility- and affordability-gated). Maui and
-    Hawai'i County, added 2026-10-27, have real, gated ADU and Missing Middle numbers too — using the
-    same OPSD TOD-infrastructure-financing report's pro forma for all four counties, scaled by each
-    county's own real sales comps — but no TOD or Parking Requirement Reduction yet, since neither
-    county has a transit-stop layer or parking-reform study. "Statewide" totals in the combined-count
-    cards only ever sum whichever counties are checked; see
-    <a href="docs/DATA_PROVENANCE.md" target="_blank">Data Provenance</a> for exactly what's built
-    out and what's still pending.
+    All four counties are in the Scenario Explorer with real, sourced numbers behind ADU,
+    Missing Middle, and Parking Requirement Reduction. Only Transit-Oriented Density is still
+    limited to Kaua'i and Honolulu, because modeling it needs a real map of bus and rail stops,
+    and that only exists for those two counties so far. Totals you see only ever add up whichever
+    counties you have checked. See
+    <a href="docs/DATA_PROVENANCE.md" target="_blank">Data Provenance</a> for exactly what's
+    built and what's still pending.
   </p>
 </div>
 
 <div class="hero-stats">
   <div class="hero-stat">
     <div class="num"><mark>64,490</mark></div>
-    <div class="desc">housing units Hawaii needs statewide, 2023–2027 — what the state's own planners call a critical shortage</div>
+    <div class="desc">housing units Hawaii needs statewide between 2023 and 2027. The state's own planners call this a critical shortage.</div>
     <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
   <div class="hero-stat">
     <div class="num"><mark class="pink">$17.46</mark></div>
-    <div class="desc">per-hour gap between what a 2BR apartment actually requires and what a renter household earns, statewide — the largest such gap in the U.S.</div>
+    <div class="desc">the gap, per hour, between what a renter household actually earns statewide and what a 2-bedroom apartment requires. The largest such gap in the U.S.</div>
     <div class="src">2024 Hawai'i Housing Planning Study</div>
   </div>
   <div class="hero-stat">
     <div class="num"><mark class="blue">25,710</mark></div>
-    <div class="desc">of the statewide need (39.9%) is on O'ahu/Honolulu — this tool's larger built-out county, by far the single biggest share of the state's shortage</div>
+    <div class="desc">units needed in Honolulu alone, the largest share of the statewide shortage at 39.9%</div>
     <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
   <div class="hero-stat">
-    <div class="num"><mark class="teal">4,914</mark></div>
-    <div class="desc">of the statewide need (7.6%) is in Kaua'i County — this tool's second built-out county, smallest share of any county but the highest short-term-rental housing loss in the state</div>
-    <div class="src">2024 Hawai'i Housing Planning Study</div>
+    <div class="num"><mark class="teal">18,879</mark></div>
+    <div class="desc">units needed in Hawai'i County, the second-largest share at 29.3%. Maui needs 14,987 (23.2%) and Kaua'i needs 4,914 (7.6%).</div>
+    <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
 </div>
 
@@ -397,12 +394,12 @@
 <div class="panel" id="headline-panel" style="max-width:1500px;margin:16px auto 0;padding:16px 28px;display:none;">
   <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;justify-content:space-between;">
     <div>
-      <h2 style="margin:0 0 6px;">County <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(Kaua'i & Honolulu default on; Hawai'i County & Maui are ADU/Missing-Middle only, feasibility- and affordability-gated -- see note)</span></h2>
+      <h2 style="margin:0 0 6px;">County <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">(all four on by default. TOD only has real transit data for Kaua'i and Honolulu, so it shows 0 for the other two)</span></h2>
       <fieldset id="scenario-county-fieldset" style="display:flex;gap:10px;">
         <label class="opt"><input type="checkbox" name="scenario-county" value="kauai" checked> Kaua'i</label>
         <label class="opt"><input type="checkbox" name="scenario-county" value="honolulu" checked> Honolulu (O'ahu)</label>
-        <label class="opt"><input type="checkbox" name="scenario-county" value="hawaii"> Hawai'i County</label>
-        <label class="opt"><input type="checkbox" name="scenario-county" value="maui"> Maui County</label>
+        <label class="opt"><input type="checkbox" name="scenario-county" value="hawaii" checked> Hawai'i County</label>
+        <label class="opt"><input type="checkbox" name="scenario-county" value="maui" checked> Maui County</label>
       </fieldset>
     </div>
     <div>
@@ -414,15 +411,6 @@
       </fieldset>
     </div>
   </div>
-  <p id="scenario-county-note" style="font-size:11.5px;color:var(--muted);margin:8px 0 0;display:none;">
-    Hawai'i County and/or Maui County is selected: as of 2026-10-27, both counties have a real,
-    sourced construction-cost pro forma (the same OPSD TOD-infrastructure-financing report Kaua'i/
-    Honolulu's pro formas come from) scaled by each county's own real sales comps, so ADU and
-    Missing Middle are feasibility- and affordability-gated the same way Kaua'i's are. TOD and
-    Parking Requirement Reduction still show nothing for these two counties, since neither scenario
-    has a transit-stop layer or parking-reform study for them yet. See
-    <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model & Assumptions</a>.
-  </p>
 
   <h2 style="margin-top:16px;">Housing units created, by reform <span style="font-weight:normal;font-size:11.5px;color:var(--muted);">— click a card to view that reform on the map</span></h2>
   <div class="stat-grid" id="reform-compare-grid" style="grid-template-columns:repeat(5,1fr);"></div>
@@ -504,44 +492,46 @@
     <h2 style="margin-top:18px;">Totals, selected counties</h2>
     <div class="stat-grid" id="stat-grid"></div>
     <div class="note" id="parking-note" style="display:none;">
-      <b><mark class="pink">Units this policy enables: 0.</mark></b> Parking Requirement Reduction does
-      not change eligibility or unit count on Kauai — ADUs already require only 1 space either way
-      under current code, so removing that requirement doesn't unlock any new unit count in this
-      model. This matches what <a href="https://doi.org/10.1177/0739456X251343047" target="_blank">Sohoni &amp; Lee's 2025 study of nine U.S. cities that removed parking minimums</a>
-      would predict for a place like Kauai: a real lever, but a minimal-effect one outside dense
-      urban markets. The chart below is showing something different — <b>land freed up</b> by removing
-      the requirement (sqft, not units), which only really matters on parcels large enough for bigger
-      development; see <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions</a>
+      <b><mark class="pink">Units this policy enables: 0.</mark></b> Dropping the parking requirement
+      doesn't change which parcels qualify for an ADU or how many units they can hold. Every county
+      already requires only 1 or 2 spaces per ADU (Kaua'i, Honolulu, and Maui require 1; Hawai'i
+      County requires 2), and removing that requirement doesn't unlock any new unit count in this
+      model. That matches what a <a href="https://doi.org/10.1177/0739456X251343047" target="_blank">2025 study of nine U.S. cities that removed parking minimums</a>
+      found in practice: a real lever, but a small one outside dense urban markets. What the chart
+      below actually shows is different: <b>land freed up</b> by dropping the requirement (square
+      feet, not units), which only matters much on parcels large enough to build something bigger
+      on that freed-up space. See <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions</a>
       for the full methodology.
     </div>
     <div class="note" id="tod-note" style="display:none;">
-      <b>Transit-Oriented Density</b> applies HB1409 (2025)/Act 159's enacted FAR-based
-      "transit-supportive density" standard (HRS §206E-246(j)/226-63(d)) using the SAME
-      mechanism for every county and mode: FAR is the real statutory tier based on each
-      parcel's actual distance to its nearest transit stop of the selected mode, not a slider.
-      <b>Bus</b> stops (TheBus/Kauai Bus, real GTFS data) are capped at the statute's FAR 4.0
-      base tier within ½ mile — real transit stations, but not an adopted "locally preferred
-      alternative" (LPA) project. <b>Rail</b> (HART Skyline, Honolulu only) is the one LPA
-      project in Hawaii today, so it reaches FAR 6.0 within ½ mile and FAR 7.0 within ¼ mile.
-      <b>Even the base FAR of 4.0, applied across every parcel within ½ mile of a bus stop in a
-      dense network, produces a very large total</b> — real Hawaii TOD programs apply these FAR
-      tiers to small, specifically-designated station-area overlays, not every bus-served block;
-      this dashboard shows the number the statute's own text implies anyway, rather than hiding
-      it. <b>Feasibility now tests BOTH a for-sale and a rental product for every parcel and
-      takes whichever pencils better</b> (added 2026-10-15, next day's work) — not "either
-      feasible, so built," which would double-count the same capacity under both tenures. The
-      rental side comes from the State of Hawaii OPSD Skyline TOD Feasibility Study's real
-      market-rate rental inputs ($3,200/mo rent, 4.5% cap rate, $574,080/unit stabilized value),
-      scaled by each tract's own real ACS median gross rent; no rental developer-profit margin
-      is subtracted, since none is sourced anywhere in the study — a real, stated gap that makes
-      the rental side a more permissive bar than the for-sale side. Each tract's
-      affordability-constrained units are then checked against the income distribution matching
-      whichever tenure won that tract — real owner-household brackets (ACS B19001) or real
-      renter-household brackets (ACS B25118) — so the dashboard can report how much of a
-      reform's impact would create owner-occupied vs. rental housing, not one blended number.
+      <p style="margin:0 0 8px;"><b><mark class="pink">Only Kaua'i and Honolulu show numbers here.</mark></b>
+      TOD needs a real map of bus and rail stops to work, and that only exists for these two
+      counties so far. Hawai'i County and Maui will show 0 until that data is built.</p>
+      <b>Transit-Oriented Density</b> applies a real, already-enacted state law (HB1409/Act 159,
+      HRS §206E-246(j) and 226-63(d)) the same way for both modes: how many units a parcel can
+      hold depends on the actual statutory tier for its distance to the nearest stop, not a
+      slider someone set. <b>Bus</b> stops (real GTFS data from TheBus and Kaua'i Bus) unlock the
+      law's base tier within half a mile of a stop. This is a real transit stop, just not one of
+      the state's officially adopted rail-style projects, so it doesn't unlock the higher tier.
+      <b>Rail</b> (Honolulu's Skyline, the one adopted project in the state right now) unlocks a
+      higher tier within half a mile and the highest tier within a quarter mile. Even the base
+      bus tier, applied to every parcel within half a mile of a stop across a dense network,
+      adds up to a very large number. Real programs in Hawai'i apply these rules to small,
+      specific station-area zones, not every block near a bus stop. This tool shows what the
+      law's own text implies if applied everywhere a stop exists, rather than hiding that
+      number. Every parcel is tested both as a for-sale product and as a rental product, and
+      whichever one actually pencils out is the one counted, so a parcel is never double-counted
+      under both. The rental math uses real numbers from a state feasibility study on Honolulu's
+      rail line ($3,200/month rent, a 4.5% cap rate, $574,080 per unit at stabilization), scaled
+      to each area's own real median rent. That study never priced in developer profit on the
+      rental side, so this model doesn't subtract any either, a real gap that makes the rental
+      math an easier bar to clear than the for-sale math. Finally, each area's affordable-unit
+      count is checked against the real income distribution for whichever buyer type (owner or
+      renter) actually won that area, so the tool can say how much of a reform creates
+      owner-occupied housing versus rental housing instead of one blended number.
       See
       <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions</a> for the full
-      methodology, the before/after figures by reform, and its stated limitations.
+      methodology, the before and after figures for each reform, and every limitation stated plainly.
     </div>
 
     <div class="legend-box">
@@ -607,8 +597,8 @@
       <div style="grid-column:1/-1;">
         <div class="chart-head">
           <p class="chart-headline">First: how do we decide a unit actually fits on a lot?</p>
-          <p class="chart-deck">Before any dollar figure matters, a parcel has to pass a physical fit test —
-          is it zoned right, is there room, does the math clear the density or area limit. These two
+          <p class="chart-deck">Before any dollar figure matters, a parcel has to pass a physical fit test:
+          is it zoned right, is there room, does the math clear the density or area limit? These two
           diagrams show exactly what the model checks, parcel by parcel, before it counts a unit as
           possible there at all. (Full prose write-up, sources, and the exact formula are on the
           <a href="#" data-tab-link="methodology">Methodology</a> tab.)</p>
@@ -699,8 +689,9 @@
       <div>
         <div class="chart-head">
           <p class="chart-headline">How much of a reform's capacity actually gets built, in a given decade</p>
-          <p class="chart-deck">The absorption-rate slider's default isn't a round guess — it's each
-          county's own historical building-permit activity as a share of its housing stock. The blended
+          <p class="chart-deck">The absorption-rate slider's default isn't a round guess. It's each
+          county's own history of how many building permits actually got pulled, as a share of its
+          existing housing stock. The blended
           bar is what the slider defaults to (a multi-year FRED average, smoothing over COVID); the
           pre-COVID bar isolates 2019 alone from the newly-added Census Building Permits Survey monthly
           export, the one full year before the 2020 permitting disruption.</p>
@@ -723,14 +714,14 @@
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Construction costs aren't one statewide number — all 4 counties compared</p>
-          <p class="chart-deck">The same feasibility-gate cost build-up, run for the same product (a 840
-          GSF low-rise for-sale unit — the one typology the source table prices for all 4 TOD sites) on
-          each county's own real, separately-sourced submarket figures: Kaua'i's Lihu'e Town Core,
+          <p class="chart-headline">Construction costs aren't one statewide number: all 4 counties compared</p>
+          <p class="chart-deck">This is the same construction-cost math, run for the same kind of unit (a
+          low-rise apartment of about 840 square feet, the one size the source data covers for all 4
+          areas), using each county's own real, separately sourced numbers: Kaua'i's Lihu'e Town Core,
           Honolulu's Iwilei-Kapalama, Maui's Ka'ahumanu Avenue Community Corridor, and Hawai'i County's
-          Ane Keohokalole Highway Corridor columns, all from the same OPSD Real Estate Assumptions table.
-          Land cost is the biggest gap by far — Honolulu's urban TOD-corridor land comps run roughly 6x
-          Lihu'e's and over 40x the Ane Keohokalole corridor's.</p>
+          Ane Keohokalole Highway Corridor, all from the same state real estate assumptions table.
+          Land cost is the biggest gap by far. Honolulu's urban land costs roughly 6 times what Lihu'e's
+          do, and over 40 times what the Ane Keohokalole corridor's do.</p>
         </div>
         <canvas id="costProFormaChart" height="110"></canvas>
       </div>
@@ -788,9 +779,10 @@
       <div>
         <div class="chart-head">
           <p class="chart-headline">What homes actually sold for, county by county</p>
-          <p class="chart-deck">Real county sales transactions, by tract, in dollars per building sqft —
-          each county's own window (see the chart above for exact date ranges and record counts; Hawai'i
-          County's is a partial year with no arm's-length flag, a stated limitation, not hidden here).</p>
+          <p class="chart-deck">Real sales transactions by tract, in dollars per square foot of building
+          area. Each county covers a different real time window (see the chart above for exact dates and
+          record counts). Hawai'i County's window is a partial year, and its data has no way to flag
+          whether a sale was arm's length. That's a real limitation, stated here, not hidden.</p>
         </div>
         <canvas id="salesChart"></canvas>
       </div>
@@ -852,22 +844,23 @@
   <div class="conditions-sections">
 
     <p style="max-width:900px;font-size:13.5px;color:var(--muted);margin:0;">
-      Reframed 2026-10-22: this is the actual starting point, before any reform — how much is already
-      zoned and legally buildable today, county by county and tract by tract. Not a policy scenario and
-      not market data (that now lives on <a href="#" data-tab-link="assumptions">Assumptions</a> as the
-      evidence behind the model's numbers) — just what today's law already allows versus what's already
-      built. See <a href="docs/EXISTING_CONDITIONS.md" target="_blank">the full write-up</a> and
+      This is the starting point, before any reform: how much housing is already zoned and legally
+      buildable right now, county by county and tract by tract. It's not a policy scenario and it's not
+      market data (that's on the <a href="#" data-tab-link="assumptions">Assumptions</a> tab). It's
+      simply what today's law already allows, compared with what's already built. See
+      <a href="docs/EXISTING_CONDITIONS.md" target="_blank">the full write-up</a> and
       <a href="docs/DATA_PROVENANCE.md" target="_blank">every source</a>.
     </p>
 
     <div class="stat-grid" id="existing-conditions-headline" style="grid-template-columns:repeat(3,1fr);"></div>
     <p style="font-size:11px;color:var(--muted);margin:0;">
-      <b>Zoned capacity</b> = units already built + whatever legal headroom today's zoning allows beyond
-      that, with no reform. <b>Headroom</b> is two enacted, already-in-force rules combined: the Missing
-      Middle density-per-acre headroom (Kaua'i only — Honolulu's piece of this is 0, a real, stated data
-      gap, no sourced density-per-acre rule for Honolulu's R-districts yet, not a finding that no headroom
-      exists) and Act 39/SB3202's statewide 2-ADU-per-lot mandate (both counties — current law, not a
-      reform, same figure the Scenario Explorer's ADU default already uses as its baseline). See the
+      <b>Zoned capacity</b> means units already built, plus whatever legal headroom today's zoning allows
+      on top of that, with no reform needed. <b>Headroom</b> combines two rules already in force today.
+      The first is Missing Middle density-per-acre headroom, which only shows up for Kaua'i right now.
+      That's a real, stated data gap, not a finding that the other three counties have none: no one has
+      sourced a density-per-acre rule for their R-districts yet. The second is the statewide law (Act
+      39/SB3202) requiring that lots allow at least 2 ADUs, which is already computed for all four
+      counties and is the same baseline figure the Scenario Explorer's ADU numbers build from. See the
       Methodology tab's ADU and Missing Middle sections for exactly how each is computed.
     </p>
 
@@ -885,7 +878,7 @@
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Every tract, one dot each — built vs. zoned capacity</p>
+          <p class="chart-headline">Every tract, one dot each: what's built versus what's zoned</p>
           <p class="chart-deck">Every tract (or place) plotted at once: how many units already exist
           (x-axis) against how many today's zoning already allows with no reform (y-axis). Both axes are
           <b>log scale</b> — most tracts hold a few dozen to a few hundred units, with a handful running
@@ -982,10 +975,10 @@
   <div class="conditions-sections">
 
     <p style="max-width:900px;font-size:13.5px;color:var(--muted);margin:0;">
-      Every number on this page's other two tabs comes from a formula below, not a guess — this page exists
-      so anyone can check the math. For each reform: what it does to the housing numbers, what assumptions
-      went in, where those assumptions came from, and the actual formula. The full narrative write-ups
-      (including every dead end and correction along the way) live in
+      Every number on the other tabs comes from a formula you can see below, not a guess. This page
+      exists so anyone can check the math. For each reform, you'll find what it does to the housing
+      numbers, what assumptions went into it, where those assumptions came from, and the actual
+      formula. The full written history, including dead ends and corrections, lives in
       <a href="docs/MODEL_AND_ASSUMPTIONS.md" target="_blank">Model &amp; Assumptions Overview</a>,
       <a href="docs/DATA_PROVENANCE.md" target="_blank">Data Provenance</a>, and
       <a href="docs/EXISTING_CONDITIONS.md" target="_blank">Existing Conditions</a>.
@@ -993,7 +986,7 @@
 
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
-        <h3>Baseline vs. policy intervention — the rule every reform below follows</h3>
+        <h3>The baseline rule every reform below follows</h3>
         <p>Every scenario answers one question: <mark>what does a reform add on top of current law</mark>,
         not what a parcel's total theoretical capacity is. A parcel's current-code capacity (what it can
         already legally hold today) is computed first and subtracted off; only the capacity a reform adds
@@ -1082,7 +1075,7 @@ estimated_new_units_per_tract = count(eligible_parcels_in_tract) × absorption_r
     <div class="conditions-section" style="grid-template-columns:1fr;">
       <div style="grid-column:1/-1;">
         <div class="chart-head">
-          <p class="chart-headline">Kauai's current zoning already allows ~1,923 more units than are built — before any reform</p>
+          <p class="chart-headline">Kaua'i's current zoning already allows about 1,923 more units than are built, with no reform at all</p>
           <p class="chart-deck">That's the baseline: capacity under today's law, not a Missing Middle
           intervention. The reform below only touches parcels current zoning does NOT already permit this on.</p>
         </div>
@@ -1451,14 +1444,15 @@ affordability_adjusted_units = feasibility_adjusted_units × (pct_households_aff
 </div>
 
 <footer>
-  Data: Kauai County parcels &amp; zoning (State of Hawaii GIS), Census ACS 2022 5-year (commute mode,
-  density, median home value), State TOD/development-cost figures from the State of Hawaii OPSD's
+  Data: parcels and zoning for all four counties (State of Hawaii GIS), Census ACS 2022 5-year figures
+  (commute mode, density, median home value, income, rent), real county sales records, and state
+  construction-cost figures from the State of Hawaii OPSD's
   <i>Financial Analysis of TOD Infrastructure Funding and Financing Options</i> (HR&amp;A Advisors et al., 2023).
-  Full methodology, data sources, and every stated assumption/simplification: see
+  Full methodology, data sources, and every stated assumption are in
   <a href="docs/MODEL_AND_ASSUMPTIONS.md">docs/MODEL_AND_ASSUMPTIONS.md</a> and
   <a href="data/DATA_SOURCES.md">data/DATA_SOURCES.md</a> in this repository.
-  Generated from <code>scripts/build_model.py</code> — not updated automatically; regenerate the embedded
-  data in <code>data/sample/kauai_dashboard.geojson</code> after a model change.
+  Generated from <code>scripts/build_model.py</code> and not updated automatically. After a model
+  change, rebuild <code>data/sample/dashboard.geojson</code> and re-embed it into this page.
 </footer>
 
 <script>
@@ -1499,8 +1493,8 @@ let defaultFeeUsd = 50000;
 // i'd default to place before tracts. tracts are pretty useless") -- and
 // reformInclude is which reforms count toward the "combined" headline
 // card, independent of which single scenario is shown on the map.
-let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all", reformInclude: new Set(["adu", "mm", "tod"]) };
-const COUNTY_MAP_VIEW = { kauai: [22.0, -159.55, 10.2], honolulu: [21.47, -157.98, 10.8] };
+let state = { scenario: "adu", view: "raw", absorptionRate: null, feeEnabled: false, feeUsd: null, geo: "place", conditionsGeo: "tract", scenarioCounties: new Set(["kauai", "honolulu", "hawaii", "maui"]), todMode: "bus", conditionsTableSort: { key: "existing_zoned_headroom", dir: -1 }, conditionsTableCounty: "all", conditionsScatterCounty: "all", reformInclude: new Set(["adu", "mm", "tod"]) };
+const COUNTY_MAP_VIEW = { kauai: [22.0, -159.55, 10.2], honolulu: [21.47, -157.98, 10.8], hawaii: [19.6, -155.5, 9.1], maui: [20.8, -156.4, 9.6] };
 const STATEWIDE_MAP_VIEW = [21.6, -158.6, 8.3];
 // Which real transit modes each county has data for -- Kauai has no
 // rail (see build_model.py's TOD_TRANSIT_MODES_BY_COUNTY); matches
@@ -1688,24 +1682,19 @@ async function init() {
   document.querySelectorAll('input[name="scenario-county"]').forEach(el => {
     el.addEventListener("change", () => {
       // Checkboxes, not radios -- any combination of the four counties
-      // can be checked. Falls back to the default county pair (Kaua'i +
-      // Honolulu) if someone unchecks every box, rather than silently
-      // rendering nothing -- and re-checks ONLY those two boxes in the
-      // UI, not all four, so the visible checkboxes always match
-      // state.scenarioCounties (a real bug when this fallback was
-      // written for exactly two checkboxes total, now a live one with
-      // four: checking every box visually while only two were actually
-      // in state would have been confusing).
+      // can be checked. Falls back to all four if someone unchecks every
+      // box, rather than silently rendering nothing, and re-checks all
+      // four boxes in the UI too, so what's visible always matches
+      // state.scenarioCounties.
       const checked = Array.from(document.querySelectorAll('input[name="scenario-county"]:checked')).map(i => i.value);
       if (checked.length === 0) {
-        document.querySelectorAll('input[name="scenario-county"]').forEach(i => { i.checked = (i.value === "kauai" || i.value === "honolulu"); });
-        state.scenarioCounties = new Set(["kauai", "honolulu"]);
+        document.querySelectorAll('input[name="scenario-county"]').forEach(i => { i.checked = true; });
+        state.scenarioCounties = new Set(["kauai", "honolulu", "hawaii", "maui"]);
       } else {
         state.scenarioCounties = new Set(checked);
       }
       const selected = Array.from(state.scenarioCounties);
       const gated = selected.every(c => SCENARIO_GATES_BY_COUNTY[c]);
-      document.getElementById("scenario-county-note").style.display = gated ? "none" : "block";
       document.querySelectorAll('#view-toggle button').forEach(b => { b.disabled = !gated; });
       if (!gated) {
         state.view = "raw";

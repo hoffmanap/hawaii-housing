@@ -1,6 +1,10 @@
-# Existing Conditions — Kauai and Honolulu Counties, as of 2026-10-16
+# Existing Conditions — all four counties, as of 2026-10-27
 
-This is the baseline picture every scenario in this tool is measured against: what each county's housing market actually looks like right now, before any zoning reform. It's not a required Challenge deliverable on its own, but it's the context a reviewer needs before any of the scenario numbers in `docs/POLICY_SCENARIO_COMPARISON.md` or the dashboard mean anything. Kauai and Honolulu are both built out below; Hawai'i County and Maui are not yet (see "What this baseline does and doesn't tell you"). The two counties' figures ARE wired into the dashboard as a combined, county-as-a-dimension view (`index.html`'s county toggle switches both Existing Conditions and the Scenario Explorer between Kauai and Honolulu). Full source-by-source citations are in `data/DATA_SOURCES.md` and the inventory table in `docs/DATA_PROVENANCE.md`.
+This is the baseline picture every scenario in this tool is measured against: what each county's housing market actually looks like right now, before any zoning reform. It's not a required Challenge deliverable on its own, but it's the context a reviewer needs before any of the scenario numbers in `docs/POLICY_SCENARIO_COMPARISON.md` or the dashboard mean anything.
+
+**Status as of 2026-10-27 (updated from this doc's original Kaua'i/Honolulu-only framing below):** Kaua'i and Honolulu were the first two counties built out, and the body of this document below was written while they were still the only two in the dashboard — read "both counties" in the sections below as "Kaua'i and Honolulu" specifically, not the full state. Hawai'i County and Maui have since been added to the live dashboard too: all four counties now appear in Existing Conditions (`index.html`'s headline cards, the built-vs-capacity scatter, and the headroom table all key off whatever's actually present in the data, so no county-specific frontend code was needed to add them), and Hawai'i County and Maui also now have real, gated ADU and Missing Middle numbers in the Scenario Explorer, plus Parking Requirement Reduction for all four counties. The one real, remaining gap is Transit-Oriented Density, which still only has real transit-stop data for Kaua'i and Honolulu. See `docs/DATA_PROVENANCE.md` for the complete, dated history of what was added when.
+
+Full source-by-source citations are in `data/DATA_SOURCES.md` and the inventory table in `docs/DATA_PROVENANCE.md`.
 
 ## Market rents
 
