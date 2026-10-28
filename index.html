@@ -2912,6 +2912,22 @@ function renderConditionsTab() {
       backgroundColor: (COUNTY_COLOR[c] || "#5c5748") + "99",
       borderColor: COUNTY_COLOR[c] || "#5c5748",
       borderWidth: 1,
+      // THE REAL FIX for "dots still clipped", found by measuring actual
+      // rendered coordinates, not guessing again: Chart.js clips every
+      // dataset's drawing to chartArea by default, REGARDLESS of the
+      // canvas-level layout.padding set above -- that padding only adds
+      // blank space around the whole canvas, it does nothing to move
+      // Chart.js's own internal clip boundary, so a bubble whose radius
+      // reaches past chartArea's edge gets sliced off by Chart.js itself
+      // before layout.padding ever enters into it. A clamped point (any
+      // tract/place at the very top of this chart's range) sits exactly
+      // ON that edge by construction, and bubbleR()'s max radius (16px)
+      // is bigger than chartArea actually leaves slack for on the
+      // top/right sides (no axis-tick gutter there, unlike left/bottom).
+      // `clip: 20` tells Chart.js to allow drawing up to 20px past
+      // chartArea on every side -- comfortably past the 16px max radius --
+      // instead of hard-clipping exactly at the axis boundary.
+      clip: 20,
     }));
   scatterDatasets.push({
     type: "line",
@@ -2970,7 +2986,22 @@ function renderConditionsTab() {
     data: { datasets: scatterDatasets },
     plugins: [headroomZonePlugin],
     options: {
-      layout: { padding: { top: 28, right: 16, bottom: 4, left: 4 } },
+      // Padding must clear the LARGEST bubble radius this chart ever draws
+      // (bubbleR()'s max is a fixed 16px, whatever point currently has the
+      // single biggest headroom value), not just a flat guess -- found by
+      // measuring actual rendered coordinates: switching the Existing
+      // Conditions tab's default to "Place" (2026-10-28) made Urban
+      // Honolulu's aggregated bubble BOTH the chart's single biggest radius
+      // AND the point clamped to the axis's top-right corner at the same
+      // time, and the previous top:28/right:16 padding left literally 0px
+      // of slack on the right (16px padding offset, exactly matching the
+      // 16px radius) -- the circle's edge landed exactly flush with the
+      // panel's border, reading as clipped even though technically still
+      // inside the canvas. Top/right get no natural whitespace from axis
+      // tick labels (those only exist on the left/bottom), so they need
+      // the full 16px-plus-margin; left/bottom already have that gutter
+      // from their own tick labels, so a small buffer is enough there.
+      layout: { padding: { top: 24, right: 24, bottom: 8, left: 8 } },
       scales: {
         x: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Units built (est.), log scale" } },
         y: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Zoned capacity, total — log scale" } },
