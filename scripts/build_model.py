@@ -3165,6 +3165,36 @@ def pct_renters_currently_paying_at_or_above(
     return pd.DataFrame(rows)
 
 
+def _load_sales_joined(path_or_paths) -> pd.DataFrame:
+    """
+    Reads one county's processed sales-comps CSV, or -- for Hawai'i
+    County, which as of 2026-10-28 has TWO independent sales sources that
+    cover different, only-partially-overlapping windows and can't be
+    produced by a single script -- concatenates several. The Regrid
+    export (process_hawaii_county_sales_exports.py) is parcel-joined and
+    carries assessor-recorded building_sqft but only covers 2025-01-02 to
+    2025-05-09 (a partial year). The Zillow-listing export
+    (process_hawaii_county_zillow_sales.py) is address-geocoded to a
+    census tract (no parcel/TMK join is possible from a street address
+    alone) and carries Zillow's self-reported sqft, but covers roughly
+    the last 24 months. Concatenating both widens the real date range
+    this county's comps draw from, at the cost of mixing two sqft
+    definitions -- stated here and in each script's own docstring, not
+    hidden. A path that doesn't exist yet (e.g. only one of the two
+    scripts has been run so far) is skipped rather than raising, so this
+    degrades gracefully to whichever source(s) are actually present.
+    """
+    paths = path_or_paths if isinstance(path_or_paths, (list, tuple)) else [path_or_paths]
+    existing = [Path(p) for p in paths if Path(p).exists()]
+    if not existing:
+        raise RuntimeError(
+            f"None of {[str(p) for p in paths]} found -- run this county's sales-processing "
+            "script(s) first."
+        )
+    frames = [pd.read_csv(p, dtype={"GEOID": str}) for p in existing]
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def income_bracket_vs_affordable_stock_share(
     county: str = "kauai", income_csv: Path | None = None, sales_joined_csv: Path | None = None
 ) -> pd.DataFrame:
@@ -3205,6 +3235,7 @@ def income_bracket_vs_affordable_stock_share(
     default_sales_paths = {
         "kauai": OUT_DIR / "kauai_sales_2026_joined.csv",
         "honolulu": OUT_DIR / "honolulu_sales_joined.csv",
+        "hawaii": [OUT_DIR / "hawaii_sales_joined.csv", OUT_DIR / "hawaii_zillow_sales_joined.csv"],
     }
     income_path = income_csv or default_income_paths.get(county, RAW_DIR / f"acs_income_distribution_{county}.csv")
     if not income_path.exists():
@@ -3214,9 +3245,7 @@ def income_bracket_vs_affordable_stock_share(
     income_df = pd.read_csv(income_path, dtype={"GEOID": str})
 
     sales_path = sales_joined_csv or default_sales_paths.get(county, OUT_DIR / f"{county}_sales_joined.csv")
-    if not sales_path.exists():
-        raise RuntimeError(f"{sales_path} not found -- run `scripts/process_sales_exports.py` first")
-    sales = pd.read_csv(sales_path, dtype={"GEOID": str})
+    sales = _load_sales_joined(sales_path)
     cfg = COUNTY_CONFIG[county]
     # Real bug, found 2026-10-28: this filter had no floor on sale_price_usd
     # and no valid_sale check, so a county whose raw export includes
@@ -3936,16 +3965,11 @@ def generic_tract_comps_development_fee_reduction_feasibility(
     stay fixed at each site's own pro-forma table figures everywhere.
     """
     default_sales_paths = {
-        "hawaii": OUT_DIR / "hawaii_sales_joined.csv",
+        "hawaii": [OUT_DIR / "hawaii_sales_joined.csv", OUT_DIR / "hawaii_zillow_sales_joined.csv"],
         "maui": OUT_DIR / "maui_sales_joined.csv",
     }
     path = sales_joined_csv or default_sales_paths[county]
-    if not path.exists():
-        raise RuntimeError(
-            f"{path} not found -- run the county's sales-processing script first "
-            "(process_hawaii_county_sales_exports.py or process_maui_sales_exports.py)."
-        )
-    sales = pd.read_csv(path, dtype={"GEOID": str})
+    sales = _load_sales_joined(path)
     # Maui's sales-joined CSV stores GEOID as a float-formatted string
     # ("15009030706.0") -- a real artifact of process_maui_sales_exports.py
     # writing a numeric GEOID column to CSV, confirmed by inspecting the

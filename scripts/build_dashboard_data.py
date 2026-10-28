@@ -37,6 +37,31 @@ import build_model as bm
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
+
+# Hawai'i County, added 2026-10-28: TWO independent sales sources exist
+# (see scripts/process_hawaii_county_sales_exports.py and
+# scripts/process_hawaii_county_zillow_sales.py's own docstrings for why
+# a single script can't produce both -- different vendor, different join
+# key, different real coverage window). Both files are read and stacked
+# wherever this script reads "{county}_sales_joined.csv"; every other
+# county still has exactly one file. A file that doesn't exist yet (only
+# one of the two has been run) is skipped, not an error.
+COUNTY_SALES_PATHS = {
+    "hawaii": [PROCESSED_DIR / "hawaii_sales_joined.csv", PROCESSED_DIR / "hawaii_zillow_sales_joined.csv"],
+}
+
+
+def load_county_sales_csv(county: str) -> pd.DataFrame | None:
+    paths = COUNTY_SALES_PATHS.get(county, [PROCESSED_DIR / f"{county}_sales_joined.csv"])
+    frames = [pd.read_csv(p, dtype={"GEOID": str}) for p in paths if p.exists()]
+    if not frames:
+        return None
+    df = pd.concat(frames, ignore_index=True, sort=False)
+    # Maui's export writes GEOID as a float-formatted string
+    # ("15009030706.0"); a no-op for every other source, which already
+    # writes a plain string.
+    df["GEOID"] = df["GEOID"].astype(str).str.replace(r"\.0$", "", regex=True)
+    return df
 OUT_PATH = Path(__file__).parent.parent / "data" / "sample" / "dashboard.geojson"
 
 COUNTY_LABELS = {"kauai": "Kaua'i", "honolulu": "Honolulu", "hawaii": "Hawai'i County", "maui": "Maui County"}
@@ -788,13 +813,12 @@ def build_light_county_features(county: str) -> tuple[list, dict]:
     # reform pencils (see this function's own docstring). A county with
     # no `{county}_sales_joined.csv` file yet simply leaves sales_by_geoid
     # empty.
-    sales_path = PROCESSED_DIR / f"{county}_sales_joined.csv"
+    sales_df = load_county_sales_csv(county)
     sales_by_geoid = {}
     countywide_sales_count = 0
     countywide_median_price_per_sqft = None
     sales_monthly_trend = []
-    if sales_path.exists():
-        sales_df = pd.read_csv(sales_path, dtype={"GEOID": str})
+    if sales_df is not None:
         valid_col = sales_df["valid_sale"] if "valid_sale" in sales_df.columns else True
         usable = sales_df[
             (sales_df["building_sqft"] > 0)
@@ -977,14 +1001,12 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     acs = pd.read_csv(RAW_DIR / f"acs_commute_density_{county}.csv", dtype={"GEOID": str})
     acs_by_geoid = {r["GEOID"]: r for r in acs.to_dict("records")}
 
-    sales_path = PROCESSED_DIR / f"{county}_sales_joined.csv"
+    sales_df = load_county_sales_csv(county)
     sales_by_geoid = {}
     countywide_sales_count = 0
     countywide_median_price_per_sqft = None
     sales_monthly_trend = []
-    if sales_path.exists():
-        sales_df = pd.read_csv(sales_path, dtype={"GEOID": str})
-        sales_df["GEOID"] = sales_df["GEOID"].str.replace(r"\.0$", "", regex=True)
+    if sales_df is not None:
         valid_col = sales_df["valid_sale"] if "valid_sale" in sales_df.columns else True
         usable = sales_df[
             (sales_df["building_sqft"] > 0)
