@@ -339,16 +339,35 @@
      affordable, read top to bottom as a sequence of losses, not a grid
      of unrelated cards. Each step's note states the loss in plain
      words so the number is never read alone. */
-  .funnel { display: flex; flex-direction: column; gap: 0; }
+  .funnel { display: flex; flex-direction: column; gap: 0; min-width: 0; }
   .funnel-step {
     background: var(--paper);
     border: 2px solid var(--ink);
     padding: 10px 12px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    container-type: inline-size;
   }
   .funnel-step.current { border-color: var(--accent, #14110b); box-shadow: 3px 3px 0 var(--ink); }
-  .funnel-value { font-size: 26px; font-weight: 700; font-family: "Archivo Black", sans-serif; line-height: 1.1; }
+  /* Scales down with the column instead of wrapping mid-digit and
+     spilling past the box border, per direct feedback ("make sure
+     the text actually fits WITHIN the box"). */
+  .funnel-value { font-size: clamp(18px, 7cqi, 26px); font-weight: 700; font-family: "Archivo Black", sans-serif; line-height: 1.15; overflow-wrap: anywhere; }
   .funnel-label { font-size: 12px; font-weight: 650; color: var(--ink); margin-top: 1px; }
-  .funnel-note { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  /* The explanatory sentence is now a <details> so each step can stay
+     compact by default (all three + the map fit on screen together)
+     with the full reasoning one click away, per direct feedback
+     ("switch to allow for expanded text boxes... more compacted so
+     you see everything together with the option to expand"). */
+  .funnel-note { margin-top: 4px; }
+  .funnel-note summary {
+    font-size: 11.5px; font-weight: 650; color: var(--muted); cursor: pointer;
+    list-style: none; display: flex; align-items: center; gap: 4px;
+  }
+  .funnel-note summary::-webkit-details-marker { display: none; }
+  .funnel-note summary::before { content: "▸"; font-size: 9px; transition: transform 0.15s ease; }
+  .funnel-note[open] summary::before { transform: rotate(90deg); }
+  .funnel-note p { font-size: 11.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; overflow-wrap: anywhere; }
   .funnel-arrow {
     text-align: center;
     font-size: 13px;
@@ -2347,19 +2366,19 @@ function renderStats() {
       <div class="funnel-step ${state.view === 'raw' ? 'current' : ''}">
         <div class="funnel-value">${fmt(totalRaw)}</div>
         <div class="funnel-label">Zoning capacity</div>
-        <div class="funnel-note">What ${whichLabel} legally allows on top of what's already built, before asking if anyone would build it.</div>
+        <details class="funnel-note"><summary>Why</summary><p>What ${whichLabel} legally allows on top of what's already built, before asking if anyone would build it.</p></details>
       </div>
       <div class="funnel-arrow">&darr;<span>&minus;${pctGap}%</span></div>
       <div class="funnel-step ${state.view === 'feasible' ? 'current' : ''}">
         <div class="funnel-value">${fmt(totalFeasible)}</div>
         <div class="funnel-label">Feasible to build</div>
-        <div class="funnel-note">${fmt(gap)} of those units (${pctGap}%) don't clear the development pro forma: cost to build exceeds what the unit would sell or rent for here.</div>
+        <details class="funnel-note"><summary>Why</summary><p>${fmt(gap)} of those units (${pctGap}%) don't clear the development pro forma: cost to build exceeds what the unit would sell or rent for here.</p></details>
       </div>
       <div class="funnel-arrow">&darr;<span>&minus;${pctAffordabilityGap}%</span></div>
       <div class="funnel-step ${state.view === 'affordable' ? 'current' : ''}">
         <div class="funnel-value">${fmt(totalAffordable)}</div>
         <div class="funnel-label">Affordable to local households</div>
-        <div class="funnel-note">Of what's feasible, ${fmt(affordabilityGap)} units (${pctAffordabilityGap}%) still cost more than the area's own households could qualify for.</div>
+        <details class="funnel-note"><summary>Why</summary><p>Of what's feasible, ${fmt(affordabilityGap)} units (${pctAffordabilityGap}%) still cost more than the area's own households could qualify for.</p></details>
       </div>
     </div>
   `;
@@ -2710,8 +2729,16 @@ function renderConditionsTab() {
   };
   const sortedScatterVals = [...scatterVals].sort((a, b) => a - b);
   const TRIM = 0.03;
-  let axisMin = niceFloorLog(percentile(sortedScatterVals, TRIM) ?? 1);
-  let axisMax = niceCeilLog(percentile(sortedScatterVals, 1 - TRIM) ?? 10);
+  // MARGIN, added 2026-10-28 per direct follow-up ("your x/y scales are
+  // so precise that values are getting cut off"): rounding the 3rd/97th
+  // percentile straight to a "nice" step put real points (the ones AT
+  // that percentile, or clamped to it) right on the plotted edge, so
+  // Chart.js drew half their bubble -- and the clamped-edge annotation
+  // text -- outside the canvas. Pad the percentile by 30% in log space
+  // before rounding, so there's always a visible gap between the
+  // outermost plotted point and the axis edge.
+  let axisMin = niceFloorLog((percentile(sortedScatterVals, TRIM) ?? 1) / 1.3);
+  let axisMax = niceCeilLog((percentile(sortedScatterVals, 1 - TRIM) ?? 10) * 1.3);
   if (axisMin >= axisMax) axisMax = niceCeilLog(axisMin * 2); // guard against a degenerate dataset
   const clamp = v => Math.min(axisMax, Math.max(axisMin, v));
   const scatterDatasets = Object.keys(byCounty)
@@ -2789,6 +2816,7 @@ function renderConditionsTab() {
     data: { datasets: scatterDatasets },
     plugins: [headroomZonePlugin],
     options: {
+      layout: { padding: { top: 28, right: 16, bottom: 4, left: 4 } },
       scales: {
         x: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Units built (est.), log scale" } },
         y: { type: "logarithmic", min: axisMin, max: axisMax, title: { display: true, text: "Zoned capacity, total — log scale" } },
