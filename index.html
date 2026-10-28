@@ -37,8 +37,14 @@
     background: none;
     color: inherit;
     position: relative;
-    white-space: nowrap;
   }
+  /* Short marks (a number, a price, a few words) should never break
+     mid-phrase -- that's what makes the highlighter swipe read as one
+     idea. Longer, sentence-length marks must be allowed to wrap, or at
+     narrow viewport widths the single unbreakable line forces the whole
+     page wider than the screen (a real layout bug found via Playwright
+     at 420px, not specific to any one chart). */
+  mark.short { white-space: nowrap; }
   mark::before {
     content: "";
     position: absolute;
@@ -46,6 +52,8 @@
     background: var(--yellow);
     transform: rotate(-0.6deg);
     z-index: -1;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
   mark.pink::before { background: var(--coral); opacity: .85; transform: rotate(0.5deg); }
   mark.teal::before { background: var(--teal); opacity: .55; transform: rotate(-0.4deg); }
@@ -254,6 +262,22 @@
      highlight is drawn via layer.setStyle() in JS instead. */
   .leaflet-interactive:focus { outline: none; }
   .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  /* Grid items default to a min-width equal to their own content's
+     natural width. With 4 counties (previously 2) some of these stat
+     cards (county name + several formatted numbers) are wide enough
+     that a fixed repeat(3,1fr) or repeat(5,1fr) grid, set inline per
+     section, refused to shrink below that content width and pushed the
+     whole page wider than the screen at narrow viewports -- a real
+     page-wide layout bug found via Playwright at 420px, not specific
+     to any one chart. Letting cards shrink, and dropping to a single
+     column on narrow screens, fixes it without changing the data. */
+  .stat-grid > * { min-width: 0; }
+  @media (max-width: 900px) {
+    .stat-grid { grid-template-columns: 1fr 1fr !important; }
+  }
+  @media (max-width: 480px) {
+    .stat-grid { grid-template-columns: 1fr !important; }
+  }
   .stat {
     background: var(--paper);
     border: 2px solid var(--ink);
@@ -386,22 +410,22 @@
 
 <div class="hero-stats">
   <div class="hero-stat">
-    <div class="num"><mark>64,490</mark></div>
+    <div class="num"><mark class="short">64,490</mark></div>
     <div class="desc">housing units Hawaii needs statewide between 2023 and 2027. The state's own planners call this a critical shortage.</div>
     <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
   <div class="hero-stat">
-    <div class="num"><mark class="pink">$17.46</mark></div>
+    <div class="num"><mark class="pink short">$17.46</mark></div>
     <div class="desc">the gap, per hour, between what a renter household actually earns statewide and what a 2-bedroom apartment requires. The largest such gap in the U.S.</div>
     <div class="src">2024 Hawai'i Housing Planning Study</div>
   </div>
   <div class="hero-stat">
-    <div class="num"><mark class="blue">25,710</mark></div>
+    <div class="num"><mark class="blue short">25,710</mark></div>
     <div class="desc">units needed in Honolulu alone, the largest share of the statewide shortage at 39.9%</div>
     <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
   <div class="hero-stat">
-    <div class="num"><mark class="teal">18,879</mark></div>
+    <div class="num"><mark class="teal short">18,879</mark></div>
     <div class="desc">units needed in Hawai'i County, the second-largest share at 29.3%. Maui needs 14,987 (23.2%) and Kaua'i needs 4,914 (7.6%).</div>
     <div class="src">2024 Hawai'i Housing Planning Study, Table 39</div>
   </div>
@@ -524,7 +548,7 @@
     </details>
 
     <div class="note" id="parking-note" style="display:none;">
-      <b><mark class="pink">Units this policy enables: 0.</mark></b> Dropping the parking requirement
+      <b><mark class="pink short">Units this policy enables: 0.</mark></b> Dropping the parking requirement
       doesn't change which parcels qualify for an ADU or how many units they can hold. Every county
       already requires only 1 or 2 spaces per ADU (Kaua'i, Honolulu, and Maui require 1; Hawai'i
       County requires 2), and removing that requirement doesn't unlock any new unit count in this
@@ -853,7 +877,7 @@
         </div>
       </div>
       <div class="takeaway" style="grid-column:1/-1;">
-        <p class="stat-line"><mark class="pink">The gap, stated plainly:</mark> <span id="income-gap-stat"></span></p>
+        <p class="stat-line"><mark class="pink short">The gap, stated plainly:</mark> <span id="income-gap-stat"></span></p>
         <p class="stat-line"><strong>Feeds:</strong> the right-hand chart is the real evidence behind the
         affordability-constrained gate (`tract_affordability_constrained_capacity()`) in the Scenario
         Explorer. It's the same mortgage math, run in the opposite direction, against the same real sales
@@ -999,6 +1023,7 @@
             </select></label>
             <span style="font-size:11.5px;color:var(--muted);" id="conditions-table-count"></span>
           </div>
+          <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
           <table class="tract-table" id="conditions-table">
             <thead>
               <tr>
@@ -1010,6 +1035,7 @@
             </thead>
             <tbody></tbody>
           </table>
+          </div>
         </details>
       </div>
     </div>

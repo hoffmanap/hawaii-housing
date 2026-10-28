@@ -3218,11 +3218,29 @@ def income_bracket_vs_affordable_stock_share(
         raise RuntimeError(f"{sales_path} not found -- run `scripts/process_sales_exports.py` first")
     sales = pd.read_csv(sales_path, dtype={"GEOID": str})
     cfg = COUNTY_CONFIG[county]
+    # Real bug, found 2026-10-28: this filter had no floor on sale_price_usd
+    # and no valid_sale check, so a county whose raw export includes
+    # non-arm's-length $0 transfers (Maui's: 11,160 of 14,179 rows are
+    # flagged valid_sale=False by the county's own CAMA system, overwhelmingly
+    # at $0) got those counted as "affordable sales" at every income bracket,
+    # including the very lowest -- Maui's pct_sales_affordable was ~63% even
+    # for a <$10,000/year household, which is not a real result, it's $0
+    # non-market transfers passing through uncaught. Same `valid_sale`
+    # convention already used correctly in build_dashboard_data.py's own
+    # sales-chart wiring (grep `valid_col` there) is applied here too, plus a
+    # hard sale_price_usd > 0 floor as a backstop for any county with no
+    # valid_sale column at all (Hawai'i County's sales have no valid_sale
+    # flag -- see process_hawaii_county_sales_exports.py's own stated
+    # caveat -- but its real sale prices are already all >= $10,000, so this
+    # floor is a no-op there, not a new exclusion).
+    valid_col = sales["valid_sale"] if "valid_sale" in sales.columns else True
     usable_sales = sales[
         (sales["building_sqft"] > 0)
         & sales["price_per_sqft"].notna()
         & sales["sale_price_usd"].notna()
+        & (sales["sale_price_usd"] > 0)
         & sales["taxclass"].isin(cfg["existing_residential_taxclasses"])
+        & valid_col
     ]
     total_sales = len(usable_sales)
     bracket_cols = [c for c, _, _ in ACS_B19001_BRACKETS_FOR_MODEL]
@@ -3938,11 +3956,24 @@ def generic_tract_comps_development_fee_reduction_feasibility(
     # string, so this is a no-op there.
     sales["GEOID"] = sales["GEOID"].str.replace(r"\.0$", "", regex=True)
     cfg = COUNTY_CONFIG[county]
+    # Same real bug and same fix as income_bracket_vs_affordable_stock_share()
+    # (found 2026-10-28): Maui's raw export has thousands of $0 non-arm's-
+    # length transfers already flagged valid_sale=False by the county's own
+    # CAMA system, and this filter had no sale_price_usd floor or valid_sale
+    # check, so those $0 rows were dragging down the tract median $/sqft this
+    # function uses to scale Maui's feasibility-gate revenue -- a real
+    # modeling error, not just a display one, since this function's output
+    # feeds build_gated_county_features()'s actual ADU/Missing Middle unit
+    # counts for Maui.
+    valid_col = sales["valid_sale"] if "valid_sale" in sales.columns else True
     usable = sales[
         (sales["building_sqft"] > 0)
         & sales["price_per_sqft"].notna()
+        & sales["sale_price_usd"].notna()
+        & (sales["sale_price_usd"] > 0)
         & sales["taxclass"].isin(cfg["existing_residential_taxclasses"])
         & sales["GEOID"].notna()
+        & valid_col
     ]
     by_tract = usable.groupby("GEOID")["price_per_sqft"].agg(["median", "count"])
     by_tract = by_tract[by_tract["count"] >= min_sales_per_tract]
