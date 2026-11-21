@@ -47,4 +47,4 @@ The challenge also permits **MIT**, **BSD 3-Clause**, and **BSD 2-Clause**. If y
 
 ## Team
 
-[List team members. All contributors must agree to the license and the challenge's [Official Rules](https://housingchallenge.turnout.rocks/rules.html).]
+Alex Hoffman, AICP, CNU-A 
