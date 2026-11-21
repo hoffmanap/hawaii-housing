@@ -939,15 +939,19 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     tract_scaled_rental_feasibility() + combine_dual_tenure_feasibility(),
     then generic_tract_affordability_constrained_capacity() for both
     tenures, routed through apply_dual_tenure_affordability_gate()) applied
-    to ADU and Missing Middle only -- NOT TOD or Parking Reduction, since
-    neither county has a TOD transit-stop layer or a parking-reform study
-    wired in yet. TOD stays absent from this county's `scenarios_available`
-    list for exactly that reason. Parking Reduction, however, now IS
-    modeled (added 2026-10-27, see hawaii_parking_reform_context()/
+    to ADU, Missing Middle, AND (added 2026-11-21) TOD. Parking Requirement
+    Reduction was wired in 2026-10-27 (see hawaii_parking_reform_context()/
     maui_parking_reform_context() and the real, county-specific current-
     code parking-space citations in run_parking_reduction_scenario()) --
     same literature-based (Sohoni & Lee 2025), not-in-study-sample
-    treatment as Kaua'i, not Honolulu's in-sample one.
+    treatment as Kaua'i, not Honolulu's in-sample one. TOD was added once
+    both counties had real public transit GTFS feeds (Hele-On Bus,
+    opendata.hawaii.gov; Maui County Transit, mauibus.org -- see
+    fetch_hawaii_county_bus_major_stops()/fetch_maui_bus_major_stops() in
+    fetch_data.py and TOD_TRANSIT_MODES_BY_COUNTY in build_model.py), using
+    the SAME statutory FAR-tier eligibility test (HRS 206E-246(j)) as
+    Kaua'i/Honolulu's bus mode -- capped at the base 4.0 FAR tier, since
+    neither county's bus network is an adopted LPA project.
     """
     bm.build_county(county)
     default_absorption_rate = bm.absorption_rate_benchmark_for(county)
@@ -956,6 +960,7 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
     mm_tract, _ = bm.run_missing_middle_scenario(county)
     mm_baseline_tract = bm.run_missing_middle_baseline_tract(county)
     zoned_capacity_tract = bm.existing_zoned_capacity_tract(county)
+    tod_tract, tod_meta = bm.run_tod_scenario(county, mode="bus")
 
     feas = bm.generic_tract_comps_development_fee_reduction_feasibility(county)
     rental_feas = bm.tract_scaled_rental_feasibility(county)
@@ -963,21 +968,25 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
 
     adu_gated = bm.apply_feasibility_gate(adu_tract, combined_feas, "estimated_new_units")
     mm_gated = bm.apply_feasibility_gate(mm_tract, combined_feas, "additional_estimated_units")
+    tod_gated = bm.apply_feasibility_gate(tod_tract, combined_feas, "additional_estimated_units")
 
     afford_for_sale = bm.generic_tract_affordability_constrained_capacity(county, sales_feasibility_df=feas, tenure="for_sale")
     afford_rental = bm.generic_tract_affordability_constrained_capacity(county, tenure="rental")
     adu_gated = bm.apply_dual_tenure_affordability_gate(adu_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
     mm_gated = bm.apply_dual_tenure_affordability_gate(mm_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
+    tod_gated = bm.apply_dual_tenure_affordability_gate(tod_gated, afford_for_sale, afford_rental, "feasibility_adjusted_units")
 
     parking_tract, parking_meta = bm.run_parking_reduction_scenario(county)
 
     adu_tract = adu_gated.copy(); adu_tract["GEOID"] = adu_tract["GEOID"].astype(str)
     mm_tract = mm_gated.copy(); mm_tract["GEOID"] = mm_tract["GEOID"].astype(str)
+    tod_tract = tod_gated.copy(); tod_tract["GEOID"] = tod_tract["GEOID"].astype(str)
     mm_baseline_tract = mm_baseline_tract.copy(); mm_baseline_tract["GEOID"] = mm_baseline_tract["GEOID"].astype(str)
     zoned_capacity_tract = zoned_capacity_tract.copy(); zoned_capacity_tract["GEOID"] = zoned_capacity_tract["GEOID"].astype(str)
 
     adu_by_geoid = {r["GEOID"]: r for r in adu_tract.to_dict("records")}
     mm_by_geoid = {r["GEOID"]: r for r in mm_tract.to_dict("records")}
+    tod_by_geoid = {r["GEOID"]: r for r in tod_tract.to_dict("records")}
     mm_baseline_by_geoid = {r["GEOID"]: r for r in mm_baseline_tract.to_dict("records")}
     zoned_by_geoid = {r["GEOID"]: r for r in zoned_capacity_tract.to_dict("records")}
     parking_tract = parking_tract.copy(); parking_tract["GEOID"] = parking_tract["GEOID"].astype(str)
@@ -1042,6 +1051,7 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
             continue
         adu_r = adu_by_geoid.get(geoid, {})
         mm_r = mm_by_geoid.get(geoid, {})
+        tod_r = tod_by_geoid.get(geoid, {})
         mm_baseline_r = mm_baseline_by_geoid.get(geoid, {})
         sales_r = sales_by_geoid.get(geoid, {})
         acs_r = acs_by_geoid.get(geoid, {})
@@ -1073,6 +1083,12 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
             "mm_excess_value_usd_at_fee50k": mm_r.get("excess_value_usd"),
             "mm_winning_tenure": mm_r.get("winning_tenure"),
             "mm_baseline_capacity_estimated_units": mm_baseline_r.get("baseline_capacity_estimated_units"),
+            "tod_eligible_parcels": tod_r.get("eligible_parcel_count"),
+            "tod_gross_capacity_at_far4": tod_r.get("additional_gross_capacity"),
+            "tod_feasible": tod_r.get("feasible"),
+            "tod_pct_affording": tod_r.get("pct_households_affording"),
+            "tod_excess_value_usd_at_fee50k": tod_r.get("excess_value_usd"),
+            "tod_winning_tenure": tod_r.get("winning_tenure"),
             "parking_eligible_parcels": parking_r.get("eligible_parcel_count"),
             "parking_land_consumed_sqft": parking_r.get("parking_land_consumed_sqft_if_required"),
             "median_home_value_usd": acs_r.get("median_home_value_usd"),
@@ -1113,6 +1129,11 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
         "adu_affordability_adjusted_units_rental": round(adu_gated["affordability_adjusted_units_rental"].sum(), 1),
         "mm_affordability_adjusted_units_for_sale": round(mm_gated["affordability_adjusted_units_for_sale"].sum(), 1),
         "mm_affordability_adjusted_units_rental": round(mm_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "tod_affordability_adjusted_units_for_sale": round(tod_gated["affordability_adjusted_units_for_sale"].sum(), 1),
+        "tod_affordability_adjusted_units_rental": round(tod_gated["affordability_adjusted_units_rental"].sum(), 1),
+        "tod_density_mechanism_note": bm.TOD_DENSITY_SOURCE_NOTE,
+        "tod_bus_transit_stop_note": tod_meta.get("major_transit_stop_definition"),
+        "tod_modes_available": ["bus"],  # neither county has an adopted LPA rail project
         "parking_spaces_required_per_unit_current_code": parking_meta.get("parking_spaces_required_per_unit_current_code"),
         "parking_land_consumed_sqft_total": round(float(parking_tract["parking_land_consumed_sqft_if_required"].sum()), 1),
         "parking_reform_context": parking_meta.get("post_reform_parking_supply_context"),
@@ -1128,16 +1149,18 @@ def build_gated_county_features(county: str) -> tuple[list, dict]:
             "adu_headroom": int(zoned_capacity_tract["adu_headroom"].sum()),
         },
         "data_status_note": (
-            f"Upgraded 2026-10-27: {COUNTY_LABELS[county]}'s ADU and Missing Middle capacity are now "
+            f"Upgraded 2026-10-27: {COUNTY_LABELS[county]}'s ADU and Missing Middle capacity are "
             "feasibility- and affordability-gated, using the SAME OPSD 'Financial Analysis of TOD "
             "Infrastructure Funding and Financing Options' report Kaua'i/Honolulu's pro formas come "
             "from (it covers all 4 counties' TOD pilot areas, not just those two), scaled by this "
             "county's own real sales comps, exactly as Kaua'i's tract_comps_ version already works. "
-            "Parking Requirement Reduction is now modeled too (added 2026-10-27): a real, "
-            "county-specific current-code parking-space citation (not Kaua'i's figure assumed to "
-            "hold everywhere) and the same Sohoni & Lee (2025) literature-based reform context "
-            "Kaua'i uses. TOD remains NOT modeled -- no transit-stop layer exists yet -- so this "
-            "entry still does not appear in the Scenario Explorer's TOD view."
+            "Parking Requirement Reduction (added 2026-10-27) uses a real, county-specific "
+            "current-code parking-space citation (not Kaua'i's figure assumed to hold everywhere) "
+            "and the same Sohoni & Lee (2025) literature-based reform context Kaua'i uses. "
+            f"Transit-Oriented Density (added 2026-11-21) now runs too: {COUNTY_LABELS[county]} "
+            "publishes a real public GTFS transit feed, so the same statutory FAR-tier eligibility "
+            "test (HRS 206E-246(j)) Kaua'i/Honolulu's bus mode uses now applies here, capped at the "
+            "base 4.0 FAR tier (neither county's bus network is an adopted LPA project)."
         ),
         "affordability_note": (
             "Of the feasibility-adjusted units, pct_affording is the real share of that tract's own "
@@ -1181,12 +1204,12 @@ def main() -> None:
             "scenarios_available": ["adu", "mm", "tod", "parking"],
         },
         # Hawai'i County and Maui: upgraded 2026-10-27 to a real feasibility/
-        # affordability-gated ADU + Missing Middle (build_gated_county_features()) --
-        # still no TOD or Parking Reduction, since neither county has a
-        # transit-stop layer or parking-reform study, so scenarios_available
-        # stays ["adu", "mm"] for both, same as before this upgrade.
-        "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm", "parking"]},
-        "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm", "parking"]},
+        # affordability-gated ADU + Missing Middle, then Parking Requirement
+        # Reduction (2026-10-27) and TOD (2026-11-21, once both counties had
+        # a real public GTFS feed -- see build_gated_county_features()). All
+        # four benchmark-plus-ADU scenarios now run for every county.
+        "hawaii": {"label": COUNTY_LABELS["hawaii"], **hawaii_meta, "scenarios_available": ["adu", "mm", "tod", "parking"]},
+        "maui": {"label": COUNTY_LABELS["maui"], **maui_meta, "scenarios_available": ["adu", "mm", "tod", "parking"]},
     }
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)

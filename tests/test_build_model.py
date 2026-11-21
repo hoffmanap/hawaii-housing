@@ -259,16 +259,22 @@ def test_tod_scenario_rejects_county_without_transit_data():
     """
     run_tod_scenario raises NotImplementedError for any county/mode combo
     absent from TOD_TRANSIT_MODES_BY_COUNTY -- this guards against silently
-    returning a wrong/empty result for a county that has no transit data.
+    returning a wrong/empty result for a county that has no transit data
+    for that mode.
 
-    Honolulu itself is no longer such a county (real bus + rail GTFS was
-    sourced for it -- see TOD_TRANSIT_MODES_BY_COUNTY), so this now checks
-    Maui, which still has no entry at all.
+    All four counties now have a real "bus" entry (Hele-On Bus and Maui
+    County Transit GTFS feeds were added 2026-11-21 -- see
+    TOD_TRANSIT_MODES_BY_COUNTY), so this checks a mode no county but
+    Honolulu has real rail data for instead.
     """
     import pytest
 
     with pytest.raises(NotImplementedError):
-        build_model.run_tod_scenario("maui")
+        build_model.run_tod_scenario("maui", mode="rail")
+    with pytest.raises(NotImplementedError):
+        build_model.run_tod_scenario("kauai", mode="rail")
+    with pytest.raises(NotImplementedError):
+        build_model.run_tod_scenario("hawaii", mode="rail")
 
 
 def test_tod_eligibility_requires_both_stop_and_corridor_proximity():
