@@ -713,6 +713,149 @@ def fetch_honolulu_major_transit_stops(out_path: Path) -> int:
     return written
 
 
+# County of Hawai'i's own open-data portal resource (opendata.hawaii.gov,
+# CKAN/data.gov harvested, "General Transit Feed Specification" dataset),
+# found 2026-11-21 via catalog.data.gov. This is Hele-On Bus's real,
+# published GTFS feed -- confirmed from agency.txt inside the zip itself
+# ("Hawaii County Mass Transit Agency"), not inferred from the dataset
+# title alone. The portal URL below is stable; it 302-redirects to a
+# freshly-signed, time-limited S3 download link each time it's fetched
+# (not a URL this project could hardcode), so always fetch through this
+# resource URL with redirects followed, never the signed S3 link itself.
+HELE_ON_GTFS_URL = (
+    "https://opendata.hawaii.gov/dataset/d029ba64-7041-46a1-bc7b-a86beea05cb5/"
+    "resource/a95ae23c-5e3f-4bde-a1a1-05188500b223/download/mta_feed4.zip"
+)
+
+# Maui County Transit's own self-hosted GTFS endpoint (mauibus.org/gtfs,
+# found 2026-11-21 via the National Transit Database's GTFS weblinks
+# dataset, data.transportation.gov resource 2u7n-ub22, NTD ID 90241) --
+# confirmed from agency.txt inside the zip ("Maui County Transit"). Unlike
+# Hele-On's portal link above, this URL serves the zip directly, no
+# redirect.
+MAUI_BUS_GTFS_URL = "https://mauibus.org/gtfs"
+
+
+def _major_stops_from_gtfs_zip(content: bytes) -> list[dict]:
+    """
+    Shared core of fetch_kauai_bus_major_stops()/fetch_honolulu_major_
+    transit_stops() for a single-mode (bus-only) GTFS feed: 2+ distinct
+    weekday routes serving a stop = "major" (see
+    fetch_kauai_bus_major_stops()'s docstring for the full rationale).
+    Returns a list of row dicts; callers write them with their own
+    provenance-specific header/county framing.
+    """
+    import io
+    import zipfile
+
+    zf = zipfile.ZipFile(io.BytesIO(content))
+
+    def read_csv_rows(name: str) -> list[dict]:
+        with zf.open(name) as fh:
+            return list(csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig")))
+
+    stops = {r["stop_id"]: r for r in read_csv_rows("stops.txt")}
+    calendar = read_csv_rows("calendar.txt")
+    weekday_service_ids = {
+        r["service_id"] for r in calendar
+        if r["monday"] == "1" and r["friday"] == "1"
+    }
+    trips = read_csv_rows("trips.txt")
+    weekday_trip_ids = {r["trip_id"] for r in trips if r["service_id"] in weekday_service_ids}
+    stop_times = read_csv_rows("stop_times.txt")
+    trip_route = {r["trip_id"]: r["route_id"] for r in trips}
+
+    routes_by_stop: dict[str, set] = {}
+    trips_by_stop: dict[str, int] = {}
+    for st in stop_times:
+        if st["trip_id"] not in weekday_trip_ids:
+            continue
+        sid = st["stop_id"]
+        routes_by_stop.setdefault(sid, set()).add(trip_route.get(st["trip_id"]))
+        trips_by_stop[sid] = trips_by_stop.get(sid, 0) + 1
+
+    rows = []
+    for stop_id, n_routes in sorted(routes_by_stop.items(), key=lambda kv: -trips_by_stop.get(kv[0], 0)):
+        stop = stops.get(stop_id)
+        if not stop or not stop.get("stop_lat") or not stop.get("stop_lon"):
+            continue
+        n = len(n_routes)
+        rows.append(
+            {
+                "stop_id": stop_id,
+                "stop_name": stop["stop_name"],
+                "stop_lat": stop["stop_lat"],
+                "stop_lon": stop["stop_lon"],
+                "weekday_trips": trips_by_stop.get(stop_id, 0),
+                "n_routes": n,
+                "is_major_stop": n >= 2,
+            }
+        )
+    return rows
+
+
+def fetch_hawaii_county_bus_major_stops(out_path: Path) -> int:
+    """
+    Hawai'i County analog of fetch_kauai_bus_major_stops() -- same
+    methodology (2+ distinct weekday routes = "major"), applied to
+    Hele-On Bus's real GTFS feed (HELE_ON_GTFS_URL, County of Hawai'i's
+    own open-data portal). Closes the scalability gap flagged in
+    docs/POLICY_SCENARIO_COMPARISON.md: Hawai'i County previously had no
+    real transit data, so Transit-Oriented Density couldn't be modeled
+    for it at all.
+
+    Uses `requests`, not `urllib` (every other fetch in this file does):
+    opendata.hawaii.gov's edge (a CKAN portal that 302-redirects to a
+    freshly-signed S3 URL) returns a bare 403 to urllib's request
+    regardless of headers set, but succeeds immediately with `requests`
+    -- confirmed 2026-11-21; not a credentials or auth issue, just a
+    client-fingerprint check this one host applies.
+    """
+    import requests
+
+    resp = requests.get(HELE_ON_GTFS_URL, headers={"User-Agent": "hawaii-housing-model/1.0"}, timeout=60)
+    resp.raise_for_status()
+    content = resp.content
+    rows = _major_stops_from_gtfs_zip(content)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            ["stop_id", "stop_name", "stop_lat", "stop_lon", "weekday_trips", "n_routes", "is_major_stop"]
+        )
+        for r in rows:
+            writer.writerow(
+                [r["stop_id"], r["stop_name"], r["stop_lat"], r["stop_lon"],
+                 r["weekday_trips"], r["n_routes"], r["is_major_stop"]]
+            )
+    return len(rows)
+
+
+def fetch_maui_bus_major_stops(out_path: Path) -> int:
+    """
+    Maui analog of fetch_kauai_bus_major_stops() -- same methodology,
+    applied to Maui County Transit's real GTFS feed (MAUI_BUS_GTFS_URL,
+    mauibus.org). Closes the same scalability gap as
+    fetch_hawaii_county_bus_major_stops() for Maui.
+    """
+    req = urllib.request.Request(MAUI_BUS_GTFS_URL, headers={"User-Agent": "hawaii-housing-model/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        content = resp.read()
+    rows = _major_stops_from_gtfs_zip(content)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            ["stop_id", "stop_name", "stop_lat", "stop_lon", "weekday_trips", "n_routes", "is_major_stop"]
+        )
+        for r in rows:
+            writer.writerow(
+                [r["stop_id"], r["stop_name"], r["stop_lat"], r["stop_lon"],
+                 r["weekday_trips"], r["n_routes"], r["is_major_stop"]]
+            )
+    return len(rows)
+
+
 TIGERWEB_PLACES_URL = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer"
 TIGERWEB_CDP_LAYER = 5  # Census Designated Places -- Hawaii has no incorporated cities, only CDPs
 
@@ -1004,6 +1147,7 @@ def main() -> None:
             "acs_income_distribution", "acs_rent_distribution", "acs_renter_income_distribution",
             "zillow_county_timeseries",
             "kauai_bus_major_stops", "kauai_arterial_roads", "honolulu_major_transit_stops",
+            "hawaii_county_bus_major_stops", "maui_bus_major_stops",
             "honolulu_adu_permits", "hawaii_county_ohana_permits", "all",
         ],
         default="all",
@@ -1063,6 +1207,20 @@ def main() -> None:
         out_path = RAW_DIR / "honolulu_major_transit_stops.csv"
         print("Fetching honolulu_major_transit_stops (TheBus + Skyline GTFS, MobilityDatabase)...")
         count = fetch_honolulu_major_transit_stops(out_path)
+        print(f"  {count} stops -> {out_path}")
+        return
+
+    if args.layer == "hawaii_county_bus_major_stops":
+        out_path = RAW_DIR / "hawaii_county_bus_major_stops.csv"
+        print("Fetching hawaii_county_bus_major_stops (Hele-On Bus GTFS, opendata.hawaii.gov)...")
+        count = fetch_hawaii_county_bus_major_stops(out_path)
+        print(f"  {count} stops -> {out_path}")
+        return
+
+    if args.layer == "maui_bus_major_stops":
+        out_path = RAW_DIR / "maui_bus_major_stops.csv"
+        print("Fetching maui_bus_major_stops (Maui County Transit GTFS, mauibus.org)...")
+        count = fetch_maui_bus_major_stops(out_path)
         print(f"  {count} stops -> {out_path}")
         return
 

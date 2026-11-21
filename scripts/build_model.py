@@ -1651,6 +1651,17 @@ TOD_TRANSIT_MODES_BY_COUNTY = {
         "bus": {"is_lpa": False, "stops_csv": "honolulu_major_transit_stops.csv", "stop_col": "mode"},
         "rail": {"is_lpa": True, "stops_csv": "honolulu_major_transit_stops.csv", "stop_col": "mode"},
     },
+    # Added 2026-11-21: Hele-On Bus (Hawai'i County) and Maui County
+    # Transit both publish real public GTFS feeds (see
+    # fetch_hawaii_county_bus_major_stops()/fetch_maui_bus_major_stops()
+    # in fetch_data.py) -- same single-mode, bus-only shape as Kauai's
+    # feed (no "mode" column, so "mode_implicit_bus" skips the mode
+    # filter the same way it does for Kauai), closing the scalability
+    # gap these two counties previously had for this scenario entirely.
+    "hawaii": {
+        "bus": {"is_lpa": False, "stops_csv": "hawaii_county_bus_major_stops.csv", "stop_col": "mode_implicit_bus"}
+    },
+    "maui": {"bus": {"is_lpa": False, "stops_csv": "maui_bus_major_stops.csv", "stop_col": "mode_implicit_bus"}},
 }
 
 
