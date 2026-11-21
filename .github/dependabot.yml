@@ -14,10 +14,10 @@ updates:
       interval: "weekly"
 
   # --- Python -----------------------------------------------------------------
-  # - package-ecosystem: "uv"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
 
   # --- JavaScript / TypeScript ------------------------------------------------
   # - package-ecosystem: "npm"
