@@ -640,6 +640,118 @@ def hawaii_county_historical_ohana_permit_summary() -> dict:
     }
 
 
+KAUAI_CAMA_SECOND_UNIT_OCCUPANCY_CODES = {"2:TWO-FAMILY", "3:THREE-FAMILY", "4:MULTI-FAMILY"}
+
+
+def kauai_secondary_dwelling_stock_summary() -> dict:
+    """
+    Real, parcel-level evidence of EXISTING secondary dwellings on Kaua'i's
+    ADU-eligible parcels, from the County's own real-property assessment
+    (CAMA) building-card export (Kaua'i GIS Open Data Hub, "Buildings"
+    layer, dataset 809e5cd7ba3f45548d5c16dc6503be08, user-supplied link,
+    fetched 2026-11-21). Each row is one building CARD on a parcel
+    (PARID); a parcel with 2+ DWELDAT (dwelling) cards, or any card coded
+    OCCUPANCY = TWO-FAMILY/THREE-FAMILY/MULTI-FAMILY, has more than one
+    dwelling structure on it today.
+
+    LIKE hawaii_county_historical_ohana_permit_summary() ABOVE, THIS
+    DELIBERATELY DOES NOT return an absorption_rate for run_adu_scenario()
+    to use, for a different but equally disqualifying reason: this data
+    has no usable YRBLT (year-built) field -- confirmed 2026-11-21, only
+    31 of 24,269 Kaua'i dwelling cards have a nonzero year-built value, so
+    there is no way to date when any of these second units were added.
+    That makes this a CROSS-SECTIONAL STOCK measure (what fraction of
+    eligible parcels have a second unit TODAY, accumulated over however
+    many years/decades the underlying zoning has allowed one) -- not a
+    FLOW measure (how many are added per decade), which is what
+    run_adu_scenario()'s absorption_rate parameter actually represents.
+    Plugging this stock fraction in directly as a decade-equivalent rate
+    would wildly overstate near-term production: 25.2% of eligible
+    parcels already having a second unit is the result of probably many
+    decades of accumulation, not of one decade, and is an order of
+    magnitude above both the generic county benchmark (6.3%) and
+    Honolulu's real decade-equivalent permit rate (1.6%).
+
+    Returned for disclosure/documentation and as a rough SANITY CHECK on
+    the existing generic benchmark, not for calibration -- see
+    docs/DATA_PROVENANCE.md. Kaua'i's ADU scenario continues to use the
+    generic county benchmark, same as before this data was found.
+
+    Also worth noting for disclosure: the OCCUPANCY enumeration includes
+    a distinct "0:GUEST HOUSE-NO KIT" code (276 records county-wide),
+    deliberately EXCLUDED from the second-unit count here because a
+    no-kitchen guest house is not a legally independent dwelling unit the
+    way an ADU/ARU is -- counting it would overstate the figure.
+    """
+    cama_path = RAW_DIR / "kauai_cama_buildings.geojson"
+    crosswalk_path = RAW_DIR / "parcels_kauai.json"
+    for p in (cama_path, crosswalk_path):
+        if not p.exists():
+            raise FileNotFoundError(f"{p} not found -- fetch the Kaua'i CAMA buildings export and parcels_kauai first.")
+
+    with open(crosswalk_path) as f:
+        raw_parcels = json.load(f)
+    tmk_to_parid = {
+        str(feat["properties"]["tmk_txt"]): feat["properties"]["parid"] for feat in raw_parcels["features"]
+    }
+
+    with open(cama_path) as f:
+        cama = json.load(f)
+    dweldat_by_parid: dict[int, list[dict]] = {}
+    for feat in cama["features"]:
+        p = feat["properties"]
+        if p.get("TABLE_") == "DWELDAT":
+            dweldat_by_parid.setdefault(p["PARID"], []).append(p)
+
+    has_second_unit = set()
+    for parid, cards in dweldat_by_parid.items():
+        occs = {c.get("OCCUPANCY") for c in cards}
+        if len(cards) >= 2 or (occs & KAUAI_CAMA_SECOND_UNIT_OCCUPANCY_CODES):
+            has_second_unit.add(parid)
+
+    adu_tract, _ = run_adu_scenario("kauai", ScenarioParams(absorption_rate=0))
+    eligible_parcel_count = int(adu_tract["eligible_parcel_count"].sum())
+
+    parcel_table = pd.read_csv(OUT_DIR / "kauai_parcel_level.csv", dtype={"tmk_txt": str})
+    cfg = COUNTY_CONFIG["kauai"]
+    min_lot_sqft = cfg.get("adu_min_lot_sqft", DEFAULT_ADU_MIN_LOT_SQFT)
+    zone_ok = parcel_table["zoning"].apply(lambda z: is_adu_eligible_zone(z, cfg))
+    has_density_rule = parcel_table["density_per_acre"].notna()
+    density_ok = has_density_rule & (
+        parcel_table["max_units_by_density"] >= parcel_table["existing_units_estimate"] + 1
+    )
+    flat_lot_ok = ~has_density_rule & (parcel_table["parcel_area_sqft"] >= min_lot_sqft)
+    eligible_mask = zone_ok & parcel_table["has_existing_residential"] & (density_ok | flat_lot_ok)
+    eligible_tmks = set(parcel_table.loc[eligible_mask, "tmk_txt"])
+    eligible_parids = {tmk_to_parid[t] for t in eligible_tmks if t in tmk_to_parid}
+
+    overlap = eligible_parids & has_second_unit
+    uptake_rate = len(overlap) / len(eligible_parids) if eligible_parids else 0.0
+
+    return {
+        "eligible_parcel_count": len(eligible_parids),
+        "eligible_parcels_with_existing_second_unit": len(overlap),
+        "cumulative_uptake_rate_pct": round(100.0 * uptake_rate, 1),
+        "generic_benchmark_decade_equivalent_pct_for_comparison": round(
+            absorption_rate_benchmark_for("kauai") * 100.0, 1
+        ),
+        "used_for_scenario_calibration": False,
+        "why_not_used": (
+            "This is a cross-sectional stock measure (share of eligible parcels with an existing "
+            "second dwelling TODAY) accumulated over an unknown, likely multi-decade span -- the "
+            "source data has no usable year-built field (0.1% coverage), so it cannot be converted "
+            "into a decade-equivalent flow rate the way Honolulu's/Maui's real permit data can. "
+            "Using the 25.2% stock figure directly as a decade absorption rate would overstate "
+            "near-term production by roughly an order of magnitude. Kaua'i's ADU scenario "
+            "continues to use the generic county benchmark instead."
+        ),
+        "source": (
+            "Kaua'i GIS Open Data Hub, real property assessment (CAMA) building cards "
+            "(dataset 809e5cd7ba3f45548d5c16dc6503be08), user-supplied link, fetched 2026-11-21"
+        ),
+    }
+
+
 def maui_real_adu_absorption_rate() -> dict:
     """
     A REAL, scenario-specific absorption rate for Maui's ADU scenario,
